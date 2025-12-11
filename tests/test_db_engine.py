@@ -45,7 +45,7 @@ def test_table_structure(engine):
     """Test that the created table has expected columns."""
     inspector = inspect(engine)
     columns = [col["name"] for col in inspector.get_columns("example_table")]
-    assert set(columns) == {"id", "iso_code", "value"}, "Unexpected schema structure"
+    assert set(columns) == {"id", "iso_code", "value", "country"}, "Unexpected schema structure"
 
 
 def test_create_single_record(session):
@@ -214,3 +214,76 @@ def test_bulk_insert_invalid_record(engine):
     assert result["inserted"] == 2  # VALID1, VALID2
     assert result["skipped"] == 1   # INVALID triggers except Exception
 
+
+def test_get_all_records(engine):
+    """Test get_all retrieves ALL records from table."""
+    # Setup test data
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
+    
+    records = get_all_records(engine, ExampleTable)
+    
+    assert len(records) == 2
+    assert any(r.iso_code == "USA" for r in records)
+    assert any(r.iso_code == "GBR" for r in records)
+
+
+def test_get_all_empty_table(engine):
+    """Test get_all returns empty list for empty table."""
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 0
+
+
+def test_flexible_filter_single_column(engine):
+    """Test filter_by_columns with one column filter."""
+    # Setup data
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
+    
+    filters = {"iso_code": "USA"}
+    records = filter_by_columns(engine, ExampleTable, filters)
+    
+    assert len(records) == 1
+    assert records[0].iso_code == "USA"
+
+
+def test_flexible_filter_multiple_columns(engine):
+    """Test filter_by_columns with multiple columns including country."""
+    # Setup data with repeated countries
+    insert_record(engine, ExampleTable, {"iso_code": "USA1", "value": 100.0, "country": "United States"})
+    insert_record(engine, ExampleTable, {"iso_code": "USA2", "value": 150.0, "country": "United States"})  # Same country!
+    insert_record(engine, ExampleTable, {"iso_code": "GBR1", "value": 100.0, "country": "United Kingdom"})
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0, "country": "United States"})  
+
+    # Filter: USA1 with specific value + country
+    filters = {"country": "United States", "value": 100.0}
+    records = filter_by_columns(engine, ExampleTable, filters)
+    
+    assert len(records) == 2
+    assert records[0].country == "United States"
+    assert records[0].value == 100.0
+
+
+def test_flexible_filter_invalid_column(engine):
+    """Test error handling for non-existent columns."""
+    filters = {"invalid_column": "test"}
+    
+    with pytest.raises(ValueError, match="Invalid column"):
+        filter_by_columns(engine, ExampleTable, filters)
+
+
+def test_flexible_filter_no_matches(engine):
+    """Test returns empty list when no records match."""
+    filters = {"iso_code": "NONEXISTENT"}
+    records = filter_by_columns(engine, ExampleTable, filters)
+    assert len(records) == 0
+
+
+def test_flexible_filter_empty_filters(engine):
+    """Test empty filters returns all records."""
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
+    
+    filters = {}
+    records = filter_by_columns(engine, ExampleTable, filters)
+    assert len(records) == 2

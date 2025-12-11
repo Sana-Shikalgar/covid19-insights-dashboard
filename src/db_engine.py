@@ -26,6 +26,20 @@ def get_engine(db_url: Optional[str] = None) -> create_engine:
     return engine
 
 
+# Define a sample ORM model for test and setup validation
+class ExampleTable(Base):
+    """
+    Example table schema for initial DB setup and test verification.
+    Replace this with actual dataset table models later.
+    """
+    __tablename__ = "example_table"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    iso_code = Column(String(100), nullable=False, unique=True)
+    value = Column(Float, nullable=True)
+    country = Column(String(255), nullable=True)
+
+
 def infer_sqlalchemy_type(series):
     if pd.api.types.is_datetime64_any_dtype(series) or "date" in series.name.lower():
         return Date
@@ -62,20 +76,6 @@ def create_dynamic_table(engine, table_name: str, df: pd.DataFrame) -> Table:
     metadata.create_all(engine)
     logging.info(f"Created dynamic table '{table_name}' with {len(columns)} columns")
     return table
-
-
-# Define a sample ORM model for test and setup validation
-class ExampleTable(Base):
-    """
-    Example table schema for initial DB setup and test verification.
-    Replace this with actual dataset table models later.
-    """
-    __tablename__ = "example_table"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    iso_code = Column(String(100), nullable=False, unique=True)
-    value = Column(Float, nullable=True)
-
 
 
 def get_session(engine):
@@ -158,3 +158,61 @@ def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str,
     
     logging.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
     return {"inserted": inserted, "skipped": skipped}
+
+
+def get_all_records(engine, model_class) -> List[Base]:
+    """
+    Retrieve ALL records from the given model class.
+    
+    Args:
+        engine: SQLAlchemy engine
+        model_class: ORM model class (e.g., ExampleTable)
+    
+    Returns:
+        List of all records
+    """
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
+    try:
+        records = session.query(model_class).all()
+        return records
+    finally:
+        session.close()
+
+
+def filter_by_columns(engine, model_class, filters: Dict[str, Any]) -> List[Any]:
+    """
+    Filter records using .filter() on multiple columns.
+    
+    Args:
+        engine: DB engine
+        model_class: ExampleTable or other ORM class
+        filters: Dict of {column_name: value}, e.g. {"iso_code": "USA", "value": 100.0}
+    
+    Returns:
+        List of matching records
+    
+    Raises:
+        ValueError: Invalid column name
+    """
+    if not filters:
+        return get_all_records(engine, model_class)
+    
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
+    try:
+        query = session.query(model_class)
+        
+        for column_name, value in filters.items():
+            # Validate column exists using getattr
+            column = getattr(model_class, column_name, None)
+            if column is None:
+                raise ValueError(f"Invalid column name: '{column_name}'")
+            
+            # Apply filter using .filter()
+            query = query.filter(column == value)
+        
+        records = query.all()
+        return records
+    finally:
+        session.close()
