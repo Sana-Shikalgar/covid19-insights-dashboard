@@ -4,6 +4,10 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import logging
 import pandas as pd
+from typing import List, Dict, Any
+
+
+UNIQUE_FEILD = "iso_code"  # Example unique field for deduplication
 
 # Initialize the ORM base class
 Base = declarative_base()
@@ -125,3 +129,32 @@ def insert_record(engine, model_class, record_data: dict) -> int:
     finally:
         session.close()
 
+
+def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Bulk insert with duplicate skipping (NO full rollback)."""
+    if not records:
+        return {"inserted": 0, "skipped": 0}
+    
+    SessionLocal = get_session(engine)
+    inserted = 0
+    skipped = 0
+    
+    for record_data in records:
+        session = SessionLocal()
+        try:
+            # Create and save individually (no transaction coupling)
+            new_record = model_class(**record_data)
+            session.add(new_record)
+            session.commit()  # Commit IMMEDIATELY
+            inserted += 1
+        except IntegrityError:
+            skipped += 1
+            session.rollback()
+        except Exception:
+            skipped += 1
+            session.rollback()
+        finally:
+            session.close()
+    
+    logging.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
+    return {"inserted": inserted, "skipped": skipped}

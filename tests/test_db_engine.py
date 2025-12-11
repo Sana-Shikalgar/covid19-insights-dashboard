@@ -2,14 +2,7 @@ import pytest
 import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError, IntegrityError
-from src.db_engine import (
-    get_engine,
-    Base,
-    ExampleTable,
-    insert_record,
-    get_session,
-    create_dynamic_table,
-)
+from src.db_engine import *
 
 
 @pytest.fixture
@@ -147,3 +140,77 @@ def test_create_dynamic_table_empty(engine):
     create_dynamic_table(engine, "empty", df)
     inspector = inspect(engine)
     assert "empty" in inspector.get_table_names()
+
+
+def test_bulk_insert_multiple_records(engine):
+    """Test bulk_insert inserts multiple records successfully."""
+    records = [
+        {"iso_code": "USA1", "value": 100.0},
+        {"iso_code": "USA2", "value": 200.0},
+        {"iso_code": "USA3", "value": 300.0}
+    ]
+    
+    result = bulk_insert(engine, ExampleTable, records)
+    
+    # Verify return value
+    assert isinstance(result, dict)
+    assert result["inserted"] == 3
+    assert result["skipped"] == 0
+    
+    # Verify records in DB
+    inspector = inspect(engine)
+    count = engine.connect().execute(text("SELECT COUNT(*) FROM example_table")).scalar()
+    assert count == 3
+
+
+def test_bulk_insert_empty_list(engine):
+    """Test bulk_insert handles empty list gracefully."""
+    result = bulk_insert(engine, ExampleTable, [])
+    assert result["inserted"] == 0
+    assert result["skipped"] == 0
+
+
+def test_bulk_insert_with_duplicates(engine):
+    """Test bulk_insert skips duplicates (unique constraint)."""
+    # First insert succeeds
+    insert_record(engine, ExampleTable, {"iso_code": "DUP", "value": 100.0})
+    
+    records = [
+        {"iso_code": "NEW1", "value": 200.0},
+        {"iso_code": "DUP", "value": 999.0},  # Duplicate
+        {"iso_code": "NEW2", "value": 300.0}
+    ]
+    
+    result = bulk_insert(engine, ExampleTable, records)
+    assert result["inserted"] == 2  # NEW1, NEW2
+    assert result["skipped"] == 1   # DUP
+
+
+def test_bulk_insert_mixed_data_types(engine):
+    """Test bulk_insert handles partial records (nulls)."""
+    records = [
+        {"iso_code": "USA", "value": 100.0},      # Full
+        {"iso_code": "GBR"},                       # Missing value (null)
+        {"iso_code": "FRA", "value": None}         # Explicit null
+    ]
+    
+    result = bulk_insert(engine, ExampleTable, records)
+    assert result["inserted"] == 3
+    
+    # Verify null handling
+    count_nulls = engine.connect().execute(text("SELECT COUNT(*) FROM example_table WHERE value IS NULL")).scalar()
+    assert count_nulls == 2
+
+
+def test_bulk_insert_invalid_record(engine):
+    """Test bulk_insert handles invalid feild name (triggers except Exception)."""
+    records = [
+        {"iso_code": "VALID1", "value": 100.0},  # Succeeds
+        {"iso_code": "INVALID"},                 # Missing required fields 
+        {"iso_code": "VALID2", "vaue": 200.0}   # Typo in field name -> Exception
+    ]
+    
+    result = bulk_insert(engine, ExampleTable, records)
+    assert result["inserted"] == 2  # VALID1, VALID2
+    assert result["skipped"] == 1   # INVALID triggers except Exception
+
