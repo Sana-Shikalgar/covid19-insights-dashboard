@@ -2,12 +2,13 @@ from sqlalchemy import create_engine, Table, MetaData, Column, Integer, String, 
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
-import logging
 import pandas as pd
 from typing import List, Dict, Any
+import logging
 
 
-UNIQUE_FEILD = "iso_code"  # Example unique field for deduplication
+logger = logging.getLogger(__name__)
+
 
 # Initialize the ORM base class
 Base = declarative_base()
@@ -23,7 +24,7 @@ def get_engine(db_url: Optional[str] = None) -> create_engine:
         pool_recycle=300,
         connect_args={'check_same_thread': False}  # SQLite threading
     )
-    logging.info(f"Created engine for DB URL: {db_url}")
+    logger.info(f"Created engine for DB URL: {db_url}")
     return engine
 
 
@@ -75,7 +76,7 @@ def create_dynamic_table(engine, table_name: str, df: pd.DataFrame) -> Table:
 
     table = Table(table_name, metadata, *columns, extend_existing=True)
     metadata.create_all(engine)
-    logging.info(f"Created dynamic table '{table_name}' with {len(columns)} columns")
+    logger.info(f"Created dynamic table '{table_name}' with {len(columns)} columns")
     return table
 
 
@@ -90,7 +91,7 @@ def get_session(engine):
         autocommit=False,  # Explicit control over commits
         expire_on_commit=False  # Keeps objects usable after commit
     )
-    logging.info("Created new SQLAlchemy session factory with best practices")
+    logger.info("Created new SQLAlchemy session factory with best practices")
     return SessionLocal
 
 
@@ -117,16 +118,16 @@ def insert_record(engine, model_class, record_data: dict) -> int:
         session.add(new_record)
         session.commit()
         record_id = new_record.id
-        logging.info(f"Inserted into {model_class.__tablename__} ID={record_id}")
+        logger.info(f"Inserted into {model_class.__tablename__} ID={record_id}")
         return record_id
 
     except IntegrityError as e:
         session.rollback()
-        logging.error(f"Integrity error inserting into {model_class.__tablename__}: {e}")
+        logger.error(f"Integrity error inserting into {model_class.__tablename__}: {e}")
         raise
     except Exception as e:
         session.rollback()
-        logging.error(f"Insert failed for {model_class.__tablename__}: {e}")
+        logger.error(f"Insert failed for {model_class.__tablename__}: {e}")
         raise
     finally:
         session.close()
@@ -158,7 +159,7 @@ def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str,
         finally:
             session.close()
     
-    logging.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
+    logger.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
     return {"inserted": inserted, "skipped": skipped}
 
 
@@ -177,7 +178,7 @@ def get_all_records(engine, model_class) -> List[Any]:
     session = SessionLocal()
     try:
         records = session.query(model_class).all()
-        logging.info(f"Fetched all records from {model_class.__tablename__}, count={len(records)}")
+        logger.info(f"Fetched all records from {model_class.__tablename__}, count={len(records)}")
         return records
     finally:
         session.close()
@@ -216,7 +217,7 @@ def filter_by_columns(engine, model_class, filters: Dict[str, Any]) -> List[Any]
             query = query.filter(column == value)
         
         records = query.all()
-        logging.info(f"Fetch {model_class.__tablename__} with filters as: {filters}")
+        logger.info(f"Fetch {model_class.__tablename__} with filters as: {filters}")
         return records
     finally:
         session.close()
