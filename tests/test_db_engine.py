@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError, IntegrityError
 from src.db_engine import (
@@ -7,7 +8,7 @@ from src.db_engine import (
     ExampleTable,
     insert_record,
     get_session,
-    get_record_by_id
+    create_dynamic_table,
 )
 
 
@@ -56,10 +57,11 @@ def test_table_structure(engine):
 
 def test_create_single_record(session):
     """Test insert_record function creates a single record successfully."""
-    record_id = insert_record(session.bind, iso_code="Test Patient", value=98.6)
-    
+    data = {"iso_code": "Test Patient", "value": 98.6}
+    record_id = insert_record(session.bind, ExampleTable, data)
+
     # Assert: Verify using helper function
-    saved_record = get_record_by_id(session.bind, record_id)
+    saved_record = session.query(ExampleTable).filter_by(iso_code="Test Patient").first()
     assert saved_record is not None
     assert saved_record.iso_code == "Test Patient"
     assert saved_record.value == 98.6
@@ -69,10 +71,12 @@ def test_create_single_record(session):
 def test_create_single_record_id_autoincrement(session):
     """Test that the primary key auto-increments correctly."""
     # Arrange & Act: Insert first record
-    record_id1 = insert_record(session.bind, iso_code="Patient 1", value=98.6)
+    data1 = {"iso_code": "Patient 1", "value": 98.6}
+    record_id1 = insert_record(session.bind, ExampleTable, data1)
     
     # Act: Insert second record
-    record_id2 = insert_record(session.bind, iso_code="Patient 2", value=98.0)
+    data2 = {"iso_code": "Patient 2", "value": 98.0}
+    record_id2 = insert_record(session.bind, ExampleTable, data2)
     
     # Assert: Verify ID assignment and uniqueness
     saved1 = session.query(ExampleTable).filter_by(iso_code="Patient 1").first()
@@ -102,35 +106,44 @@ def test_insert_record_session_failure_raises_exception(engine, monkeypatch):
     monkeypatch.setattr(database, "get_session", fake_get_session)
 
     with pytest.raises(RuntimeError, match="Simulated database connection failure"):
-        database.insert_record(engine, iso_code="Test", value=98.6)
+        data = {"iso_code": "Test", "value": 90.0}
+        database.insert_record(engine, ExampleTable, data)
 
 
 
 def test_insert_record_duplicate_name_raises_integrity_error(engine):
     """Test duplicate name violation (assumes unique constraint on name)."""
     # First insert succeeds
-    insert_record(engine, iso_code="DuplicateTest", value=1.0)
+    data = {"iso_code": "DuplicateTest", "value": 1.0}
+    insert_record(engine, ExampleTable, data)
     
-    # Second insert should fail (if you add unique=True to name column)
+    # Second insert should fail (if you add unique=True to iso_code column)
     with pytest.raises(IntegrityError):
-        insert_record(engine, iso_code="DuplicateTest", value=2.0)
+        data = {"iso_code": "DuplicateTest", "value": 2.0}
+        insert_record(engine, ExampleTable, data)
 
 
+def test_create_dynamic_table_basic(engine):
+    """Basic: creates table with columns."""
+    df = pd.DataFrame({'iso_code': ['USA'], 'total_cases': [100.0]})
+    create_dynamic_table(engine, "test", df)
+    inspector = inspect(engine)
+    assert "test" in inspector.get_table_names()
+    assert len(inspector.get_columns("test")) == 2
 
-def test_get_record_by_id_session_failure(engine, monkeypatch):
-    """Test that session/query failures are properly handled and re-raised."""
-    import src.db_engine as database
-    
-    class FailingSession:
-        def query(self, *args):
-            raise RuntimeError("Database query failure")
-        def rollback(self): pass
-        def close(self): pass
-    
-    def fake_get_session(engine):
-        return lambda: FailingSession()
-    
-    monkeypatch.setattr(database, "get_session", fake_get_session)
-    
-    with pytest.raises(RuntimeError, match="Database query failure"):
-        database.get_record_by_id(engine, record_id=1)
+
+def test_create_dynamic_table_all_nulls(engine):
+    """Edge case: all null values."""
+    df = pd.DataFrame({'iso_code': [None], 'total_cases': [None]})
+    create_dynamic_table(engine, "null_test", df)
+    inspector = inspect(engine)
+    assert "null_test" in inspector.get_table_names()
+    assert len(inspector.get_columns("null_test")) == 2
+
+
+def test_create_dynamic_table_empty(engine):
+    """Edge case: empty DataFrame."""
+    df = pd.DataFrame(columns=['iso_code'])
+    create_dynamic_table(engine, "empty", df)
+    inspector = inspect(engine)
+    assert "empty" in inspector.get_table_names()

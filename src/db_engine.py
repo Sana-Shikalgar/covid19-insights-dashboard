@@ -1,20 +1,63 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float
+from sqlalchemy import create_engine, Table, MetaData, Column, Integer, String, Float, Date, Text, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import logging
+import pandas as pd
 
 # Initialize the ORM base class
 Base = declarative_base()
 
 
-def get_engine(db_url="sqlite:///health_data.db"):
-    """
-    Create and return a SQLAlchemy database engine.
-    Default is a local SQLite database called health_data.db.
-    """
-    engine = create_engine(db_url, echo=False, future=True)
+def get_engine(db_url: Optional[str] = None) -> create_engine:
+    db_url = db_url or "sqlite:///health_data.db"
+    engine = create_engine(
+        db_url,
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={'check_same_thread': False}  # SQLite threading
+    )
     return engine
+
+
+def infer_sqlalchemy_type(series):
+    if pd.api.types.is_datetime64_any_dtype(series) or "date" in series.name.lower():
+        return Date
+    if pd.api.types.is_numeric_dtype(series):
+        return Float
+    if pd.api.types.is_bool_dtype(series):
+        return Boolean
+    return String(255)
+
+
+# Creating a dynamic table schema using SQLAlchemy ORM
+def create_dynamic_table(engine, table_name: str, df: pd.DataFrame) -> Table:
+    """
+    Dynamically create table schema from pandas DataFrame (handles 67 fields automatically).
+    
+    Args:
+        engine: SQLAlchemy engine
+        table_name: Name for the table (e.g., 'covid_data')
+        df: Sample DataFrame to infer schema from first row
+    
+    Returns:
+        SQLAlchemy Table object
+    """
+    metadata = MetaData()
+    
+    # Infer column types from DataFrame (handles nulls gracefully)
+    columns = []
+    for col in df.columns:
+        col_type = infer_sqlalchemy_type(df[col])
+        # name must be first arg
+        columns.append(Column(col, col_type, nullable=True))
+
+    table = Table(table_name, metadata, *columns, extend_existing=True)
+    metadata.create_all(engine)
+    logging.info(f"Created dynamic table '{table_name}' with {len(columns)} columns")
+    return table
 
 
 # Define a sample ORM model for test and setup validation
@@ -33,69 +76,52 @@ class ExampleTable(Base):
 
 def get_session(engine):
     """
-    Create a new SQLAlchemy session bound to the given engine.
+    Create session factory with BEST PRACTICES: autoflush=False, autocommit=False.
+    This prevents unexpected behavior during tests and operations.
     """
-    Session = sessionmaker(bind=engine)
-    return Session
+    SessionLocal = sessionmaker(
+        bind=engine, 
+        autoflush=False,  # Prevents unexpected flushes
+        autocommit=False,  # Explicit control over commits
+        expire_on_commit=False  # Keeps objects usable after commit
+    )
+    return SessionLocal
 
 
-# NEW IMPLEMENTATION FOR STEP 5: CRUD - Create
-def insert_record(engine, iso_code: str, value: Optional[float] = None) -> int:
+
+def insert_record(engine, model_class, record_data: dict) -> int:
     """
-    Insert a single record into the example_table and return the generated ID.
-    
+    Insert a single record using a SQLAlchemy ORM model class.
+
     Args:
         engine: SQLAlchemy engine instance
-        name: Name field (required, non-nullable)
-        value: Value field (optional)
-    
+        model_class: ORM class, e.g. ExampleTable
+        record_data: dict of field_name -> value
+
     Returns:
-        int: The auto-generated primary key ID of the inserted record
-    
-    Raises:
-        IntegrityError: If unique constraints are violated
+        int: primary key ID of inserted row
     """
-    session = get_session(engine)()
+    if not record_data:
+        raise ValueError("record_data cannot be empty")
+
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
     try:
-    # Create new record instance
-        new_record = ExampleTable(iso_code=iso_code, value=value)
-            
-        # Add to session and commit
+        new_record = model_class(**record_data)
         session.add(new_record)
         session.commit()
-            
-        # Return the generated ID
         record_id = new_record.id
-        session.close()
-            
-        logging.info(f"Successfully inserted record with ID: {record_id}")
+        logging.info(f"Inserted into {model_class.__tablename__} ID={record_id}")
         return record_id
-        
+
     except IntegrityError as e:
         session.rollback()
-        logging.error(f"Integrity error during insert: {e}")
+        logging.error(f"Integrity error inserting into {model_class.__tablename__}: {e}")
         raise
     except Exception as e:
         session.rollback()
-        logging.error(f"Error during insert: {e}")
+        logging.error(f"Insert failed for {model_class.__tablename__}: {e}")
         raise
     finally:
         session.close()
 
-
-def get_record_by_id(engine, record_id: int) -> Optional[ExampleTable]:
-    """
-    Retrieve a single record by its primary key ID.
-    Helper function for testing/verification.
-    """
-    session = get_session(engine)()
-    
-    try:
-        record = session.query(ExampleTable).filter(ExampleTable.id == record_id).first()
-        session.close()
-        return record
-    except Exception as e:
-        session.rollback()
-        session.close()
-        logging.error(f"Error retrieving record {record_id}: {e}")
-        raise
