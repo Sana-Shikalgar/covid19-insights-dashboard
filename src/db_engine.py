@@ -23,6 +23,7 @@ def get_engine(db_url: Optional[str] = None) -> create_engine:
         pool_recycle=300,
         connect_args={'check_same_thread': False}  # SQLite threading
     )
+    logging.info(f"Created engine for DB URL: {db_url}")
     return engine
 
 
@@ -89,6 +90,7 @@ def get_session(engine):
         autocommit=False,  # Explicit control over commits
         expire_on_commit=False  # Keeps objects usable after commit
     )
+    logging.info("Created new SQLAlchemy session factory with best practices")
     return SessionLocal
 
 
@@ -160,7 +162,7 @@ def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str,
     return {"inserted": inserted, "skipped": skipped}
 
 
-def get_all_records(engine, model_class) -> List[Base]:
+def get_all_records(engine, model_class) -> List[Any]:
     """
     Retrieve ALL records from the given model class.
     
@@ -175,6 +177,7 @@ def get_all_records(engine, model_class) -> List[Base]:
     session = SessionLocal()
     try:
         records = session.query(model_class).all()
+        logging.info(f"Fetched all records from {model_class.__tablename__}, count={len(records)}")
         return records
     finally:
         session.close()
@@ -213,6 +216,7 @@ def filter_by_columns(engine, model_class, filters: Dict[str, Any]) -> List[Any]
             query = query.filter(column == value)
         
         records = query.all()
+        logging.info(f"Fetch {model_class.__tablename__} with filters as: {filters}")
         return records
     finally:
         session.close()
