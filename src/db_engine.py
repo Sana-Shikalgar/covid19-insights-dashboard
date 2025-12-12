@@ -1,14 +1,15 @@
-from sqlalchemy import create_engine, update, Table, Engine, MetaData, Column, Integer, String, Float, Date, Text, Boolean
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, update, insert, Table, Engine, MetaData, Column, Integer, String, Float, Date, Text, Boolean
+from sqlalchemy.orm import declarative_base, sessionmaker, DeclarativeMeta
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import pandas as pd
-from typing import List, Dict, Any, Type
+from typing import List, Dict, Any, Type, Union
 import logging
+import warnings
 
 
 logger = logging.getLogger(__name__)
-
+warnings.filterwarnings("ignore")
 
 # Initialize the ORM base class
 Base = declarative_base()
@@ -42,6 +43,32 @@ class ExampleTable(Base):
     country = Column(String(255), nullable=True)
 
 
+def ensure_orm_model(target: Any, base: Any = Base) -> Type[DeclarativeMeta]:
+    """
+    Given either an ORM model or a Table, return an ORM model.
+
+    - If target is already an ORM model (has __table__ and __tablename__),
+      return it unchanged.
+    - If target is a Table, create a dynamic ORM class bound to that table.
+    """
+    if hasattr(target, "__table__") and hasattr(target, "__tablename__"):
+        # Already an ORM model
+        return target
+
+    if isinstance(target, Table):
+        DynamicModel = type(
+            f"{target.name.capitalize()}Model",
+            (base,),
+            {
+                "__tablename__": target.name,
+                "__table__": target,
+            },
+        )
+        return DynamicModel
+
+    raise TypeError(f"Unsupported target type for ensure_orm_model: {type(target)!r}")
+
+
 def infer_sqlalchemy_type(series):
     if pd.api.types.is_datetime64_any_dtype(series) or "date" in series.name.lower():
         return Date
@@ -68,8 +95,8 @@ def create_dynamic_table(engine: Engine, table_name: str, df: pd.DataFrame) -> T
     """
     metadata = MetaData()
     
-    # Infer column types from DataFrame (handles nulls gracefully)
-    columns = []
+    # Always create 'id' as primary key first
+    columns = [Column('id', Integer, primary_key=True, autoincrement=True)]
     for col in df.columns:
         col_type = infer_sqlalchemy_type(df[col])
         # name must be first arg
@@ -103,7 +130,7 @@ def insert_record(engine: Engine, model_class, record_data: dict) -> int:
 
     Args:
         engine: SQLAlchemy engine instance
-        model_class: ORM class, e.g. ExampleTable
+        model_class: ORM class
         record_data: dict of field_name -> value
 
     Returns:
@@ -134,35 +161,64 @@ def insert_record(engine: Engine, model_class, record_data: dict) -> int:
         session.close()
 
 
-def bulk_insert(engine: Engine, model_class, records: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Bulk insert with duplicate skipping (NO full rollback)."""
+def bulk_insert(engine: Engine, model_class: Union[Type, Table], records: List[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Bulk insert records, handling duplicates by skipping them when using ORM.
+    
+    CRITICAL FIX: Reverting ORM path (Path 2) to the individual loop to satisfy 
+    the TDD requirement for duplicate skipping (partial success).
+    """
     if not records:
         return {"inserted": 0, "skipped": 0}
     
     SessionLocal = get_session(engine)
-    inserted = 0
-    skipped = 0
     
-    for record_data in records:
-        session = SessionLocal()
+    # Path 1: SQLAlchemy Core Table object
+    if isinstance(model_class, Table):
+        inserted = 0
         try:
-            # Create and save individually (no transaction coupling)
-            new_record = model_class(**record_data)
-            session.add(new_record)
-            session.commit()  # Commit IMMEDIATELY
-            inserted += 1
-        except IntegrityError:
-            skipped += 1
-            session.rollback()
-        except Exception:
-            skipped += 1
-            session.rollback()
-        finally:
-            session.close()
-    
-    logger.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
-    return {"inserted": inserted, "skipped": skipped}
-
+            with engine.begin() as conn:
+                # Core Insert is typically faster but doesn't handle duplicates gracefully without specific DB syntax
+                result = conn.execute(insert(model_class), records)
+                inserted = result.rowcount or 0
+                skipped = 0 
+            logger.info(f"Bulk insert (Core Table): {inserted} inserted, {skipped} skipped (approx)")
+            return {"inserted": inserted, "skipped": skipped}
+        except IntegrityError as e:
+            # Core failures roll back the whole batch
+            logger.error(f"Bulk insert (Core) failed due to IntegrityError: {e}")
+            return {"inserted": 0, "skipped": len(records)} 
+        except Exception as e:
+            logger.error(f"Bulk insert (Core) failed: {e}")
+            raise
+            
+    # Path 2: SQLAlchemy ORM Model object (Individual loop for robust duplicate skipping)
+    else:
+        inserted = 0
+        skipped = 0
+        
+        for record_data in records:
+            # Use a new session for each insert to commit/rollback individually
+            session = SessionLocal() 
+            try:
+                # Use model_class(**record_data) for ORM insertion
+                new_record = model_class(**record_data)
+                session.add(new_record)
+                session.commit()
+                inserted += 1
+            except IntegrityError:
+                skipped += 1
+                session.rollback()
+            except Exception as e:
+                # Handles missing required fields (like 'value' after the fix) or typo errors
+                skipped += 1
+                session.rollback()
+                logger.warning(f"Skipped record due to error or missing required field: {e}")
+            finally:
+                session.close()
+        
+        logger.info(f"Bulk insert (ORM Loop): {inserted} inserted, {skipped} skipped")
+        return {"inserted": inserted, "skipped": skipped}
 
 # READ
 def get_all_records(engine: Engine, model_class) -> List[Any]:
@@ -171,28 +227,30 @@ def get_all_records(engine: Engine, model_class) -> List[Any]:
     
     Args:
         engine: SQLAlchemy engine
-        model_class: ORM model class (e.g., ExampleTable)
+        model_class: ORM model class
     
     Returns:
         List of all records
     """
     SessionLocal = get_session(engine)
     session = SessionLocal()
+
     try:
         records = session.query(model_class).all()
-        logger.info(f"Fetched all records from {model_class.__tablename__}, count={len(records)}")
+        table_name = getattr(model_class, "__tablename__", getattr(model_class, "name", str(model_class)))
+        logger.info(f"Fetched all records from {table_name}, count={len(records)}")
         return records
     finally:
         session.close()
 
 
-def filter_by_columns(engine: Engine, model_class, filters: Dict[str, Any]) -> List[Any]:
+def filter_by_col_values(engine: Engine, model_class, filters: Dict[str, Any]) -> List[Any]:
     """
     Filter records using .filter() on multiple columns.
     
     Args:
         engine: DB engine
-        model_class: ExampleTable or other ORM class
+        model_class: other ORM class
         filters: Dict of {column_name: value}, e.g. {"iso_code": "USA", "value": 100.0}
     
     Returns:
@@ -232,7 +290,7 @@ def update_record(engine: Engine, model_class: Type, filters: Dict[str, Any], up
 
     Args:
         engine: SQLAlchemy Engine (e.g., from get_engine or test fixture).
-        model_class: ORM mapped class (e.g., ExampleTable).
+        model_class: ORM mapped class.
         filters: column_name → value dict used in WHERE clause.
         updates: column_name → new_value dict used in SET clause.
 

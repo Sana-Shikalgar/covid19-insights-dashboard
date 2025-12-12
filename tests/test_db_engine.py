@@ -126,7 +126,7 @@ def test_create_dynamic_table_basic(engine):
     create_dynamic_table(engine, "test", df)
     inspector = inspect(engine)
     assert "test" in inspector.get_table_names()
-    assert len(inspector.get_columns("test")) == 2
+    assert len(inspector.get_columns("test")) == 3
 
 
 def test_create_dynamic_table_all_nulls(engine):
@@ -135,7 +135,7 @@ def test_create_dynamic_table_all_nulls(engine):
     create_dynamic_table(engine, "null_test", df)
     inspector = inspect(engine)
     assert "null_test" in inspector.get_table_names()
-    assert len(inspector.get_columns("null_test")) == 2
+    assert len(inspector.get_columns("null_test")) == 3
 
 
 def test_create_dynamic_table_empty(engine):
@@ -245,7 +245,7 @@ def test_flexible_filter_single_column(engine):
     insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
     
     filters = {"iso_code": "USA"}
-    records = filter_by_columns(engine, ExampleTable, filters)
+    records = filter_by_col_values(engine, ExampleTable, filters)
     
     assert len(records) == 1
     assert records[0].iso_code == "USA"
@@ -261,7 +261,7 @@ def test_flexible_filter_multiple_columns(engine):
 
     # Filter: USA1 with specific value + country
     filters = {"country": "United States", "value": 100.0}
-    records = filter_by_columns(engine, ExampleTable, filters)
+    records = filter_by_col_values(engine, ExampleTable, filters)
     
     assert len(records) == 2
     assert records[0].country == "United States"
@@ -273,13 +273,13 @@ def test_flexible_filter_invalid_column(engine):
     filters = {"invalid_column": "test"}
     
     with pytest.raises(ValueError, match="Invalid column"):
-        filter_by_columns(engine, ExampleTable, filters)
+        filter_by_col_values(engine, ExampleTable, filters)
 
 
 def test_flexible_filter_no_matches(engine):
     """Test returns empty list when no records match."""
     filters = {"iso_code": "NONEXISTENT"}
-    records = filter_by_columns(engine, ExampleTable, filters)
+    records = filter_by_col_values(engine, ExampleTable, filters)
     assert len(records) == 0
 
 
@@ -289,7 +289,7 @@ def test_flexible_filter_empty_filters(engine):
     insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
     
     filters = {}
-    records = filter_by_columns(engine, ExampleTable, filters)
+    records = filter_by_col_values(engine, ExampleTable, filters)
     assert len(records) == 2
 
 
