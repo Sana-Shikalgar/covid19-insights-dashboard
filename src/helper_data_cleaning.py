@@ -13,7 +13,8 @@ def validate_dataframe_content(df):
     if df.empty:
         logger.error("Dataset loaded but is empty")
         raise ValueError("Dataset is empty")
-    print(f"✓ Loaded: {df.shape}")
+    logger.info(f"Loaded: {df.shape}")
+    return True
 
 
 # -------------------------------------------------------------
@@ -73,7 +74,7 @@ def assess_data(df):
             'missing_percent': missing_percent
         })
 
-        print_assessment_summary(df, missing_counts)
+        logger.info(f"Initial assessment: shape={df.shape}")
         return missing_summary
     except Exception as e:
         logger.error(f"Assessment failed: {e}")
@@ -139,7 +140,6 @@ def impute_continent(df):
         df = impute_continent_by_aggregate(df)
 
         missing = df['continent'].isnull().sum()
-        print(f"✓ Continent: {missing} missing")
         logger.info(f"Continent imputation: missing={missing}")
 
         if missing > 0:
