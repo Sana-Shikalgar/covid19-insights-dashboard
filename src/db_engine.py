@@ -1,9 +1,9 @@
-from sqlalchemy import create_engine, Table, MetaData, Column, Integer, String, Float, Date, Text, Boolean
+from sqlalchemy import create_engine, update, Table, Engine, MetaData, Column, Integer, String, Float, Date, Text, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Type
 import logging
 
 
@@ -52,8 +52,9 @@ def infer_sqlalchemy_type(series):
     return String(255)
 
 
+# CREATE
 # Creating a dynamic table schema using SQLAlchemy ORM
-def create_dynamic_table(engine, table_name: str, df: pd.DataFrame) -> Table:
+def create_dynamic_table(engine: Engine, table_name: str, df: pd.DataFrame) -> Table:
     """
     Dynamically create table schema from pandas DataFrame (handles 67 fields automatically).
     
@@ -80,7 +81,7 @@ def create_dynamic_table(engine, table_name: str, df: pd.DataFrame) -> Table:
     return table
 
 
-def get_session(engine):
+def get_session(engine: Engine):
     """
     Create session factory with BEST PRACTICES: autoflush=False, autocommit=False.
     This prevents unexpected behavior during tests and operations.
@@ -96,7 +97,7 @@ def get_session(engine):
 
 
 
-def insert_record(engine, model_class, record_data: dict) -> int:
+def insert_record(engine: Engine, model_class, record_data: dict) -> int:
     """
     Insert a single record using a SQLAlchemy ORM model class.
 
@@ -133,7 +134,7 @@ def insert_record(engine, model_class, record_data: dict) -> int:
         session.close()
 
 
-def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str, int]:
+def bulk_insert(engine: Engine, model_class, records: List[Dict[str, Any]]) -> Dict[str, int]:
     """Bulk insert with duplicate skipping (NO full rollback)."""
     if not records:
         return {"inserted": 0, "skipped": 0}
@@ -163,7 +164,8 @@ def bulk_insert(engine, model_class, records: List[Dict[str, Any]]) -> Dict[str,
     return {"inserted": inserted, "skipped": skipped}
 
 
-def get_all_records(engine, model_class) -> List[Any]:
+# READ
+def get_all_records(engine: Engine, model_class) -> List[Any]:
     """
     Retrieve ALL records from the given model class.
     
@@ -184,7 +186,7 @@ def get_all_records(engine, model_class) -> List[Any]:
         session.close()
 
 
-def filter_by_columns(engine, model_class, filters: Dict[str, Any]) -> List[Any]:
+def filter_by_columns(engine: Engine, model_class, filters: Dict[str, Any]) -> List[Any]:
     """
     Filter records using .filter() on multiple columns.
     
@@ -219,5 +221,116 @@ def filter_by_columns(engine, model_class, filters: Dict[str, Any]) -> List[Any]
         records = query.all()
         logger.info(f"Fetch {model_class.__tablename__} with filters as: {filters}")
         return records
+    finally:
+        session.close()
+
+
+# UPDATE
+def update_record(engine: Engine, model_class: Type, filters: Dict[str, Any], updates: Dict[str, Any]) -> int:
+    """
+    Update records in the given model_class table.
+
+    Args:
+        engine: SQLAlchemy Engine (e.g., from get_engine or test fixture).
+        model_class: ORM mapped class (e.g., ExampleTable).
+        filters: column_name → value dict used in WHERE clause.
+        updates: column_name → new_value dict used in SET clause.
+
+    Returns:
+        Number of rows updated.
+
+    Raises:
+        ValueError if any filter/update column does not exist on the model.
+        Any SQLAlchemy error will propagate after being logged.
+    """
+
+    if not filters:
+        logger.error("update_record called without any filter conditions; refusing full-table update")
+        raise ValueError("At least one filter condition is required for update_record.")
+
+    if not updates:
+        logger.error("update_record called without any update values; nothing to update")
+        raise ValueError("At least one update value is required for update_record.")
+
+    # Validate that all filter/update keys exist as table columns
+    model_columns = {c.name for c in model_class.__table__.columns}
+
+    invalid_filters = [k for k in filters.keys() if k not in model_columns]
+    if invalid_filters:
+        logger.error(f"update_record received invalid filter columns: {invalid_filters}")
+        raise ValueError(f"Invalid filter columns: {invalid_filters}")
+
+
+    invalid_updates = [k for k in updates.keys() if k not in model_columns]
+    if invalid_updates:
+        logger.error(f"update_record received invalid update columns: {invalid_updates}")
+        raise ValueError(f"Invalid update columns: {invalid_updates}")
+   
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
+
+    try:
+        # Build UPDATE statement: UPDATE table SET ... WHERE ...
+        stmt = update(model_class)
+        for col_name, value in filters.items():
+            column = getattr(model_class, col_name)
+            stmt = stmt.where(column == value)
+
+        stmt = stmt.values(**updates)
+
+        result = session.execute(stmt)
+        session.commit()
+
+        rows_updated = result.rowcount or 0
+        logger.info(
+            f"update_record: updated {rows_updated} rows in {model_class.__name__} filters={filters}, updates={updates}"
+        )
+        return rows_updated
+    
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            f"update_record failed for {model_class.__name__} filters={filters}, updates={updates}: {e}"
+        )
+        raise
+
+    finally:
+        session.close()
+
+
+def bulk_update_table(engine: Engine, model_class: Type, df: pd.DataFrame) -> Boolean:
+    """
+    Replace all rows in the given table with rows from df.
+
+    Assumes df has columns matching the ORM model's column names (at least
+    for all non-nullable, non-autogenerated columns).
+    """
+
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
+
+    try:
+        # Clear existing rows
+        deleted = session.query(model_class).delete()
+        session.commit()
+        logger.info(f"bulk_replace_table: deleted {deleted} existing rows from {model_class.__name__}")
+
+        # If df is empty, we are done (table remains empty)
+        if df.empty:
+            return    
+        
+        # Convert DataFrame rows to list[dict] for bulk_insert_mappings
+        records = df.to_dict(orient="records")
+
+        session.bulk_insert_mappings(model_class, records)
+        session.commit()
+
+        logger.info(f"bulk_replace_table: inserted {len(records)} rows into {model_class.__name__}")
+
+    except Exception as e:
+        session.rollback()
+        logger.error(f"bulk_replace_table failed for {model_class.__name__}: {e}")
+        raise
+
     finally:
         session.close()
