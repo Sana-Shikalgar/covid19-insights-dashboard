@@ -184,7 +184,9 @@ def final_cleanup(df):
 
 def convert_to_category(df):
     """Convert specified string columns to category for memory optimization."""
-    df[['continent', 'iso_code', 'location']] = df[['continent', 'iso_code', 'location']].astype('category')
+    cols = [c for c in ['continent', 'iso_code', 'location'] if c in df.columns]
+    if cols:
+        df[cols] = df[cols].astype('category')
     return df
 
 
