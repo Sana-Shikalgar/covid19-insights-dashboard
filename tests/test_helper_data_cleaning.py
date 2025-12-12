@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
+import logging
 
 from src.helper_data_cleaning import (
     validate_dataframe_content,
@@ -37,11 +38,11 @@ def test_validate_dataframe_content_raises_on_empty():
         validate_dataframe_content(df)
 
 
-def test_validate_dataframe_content_ok(capsys):
+def test_validate_dataframe_content_ok(caplog):
     df = pd.DataFrame({"a": [1, 2]})
-    validate_dataframe_content(df)
-    out, _ = capsys.readouterr()
-    assert "Loaded: (2, 1)" in out
+    with caplog.at_level(logging.INFO):
+        validate_dataframe_content(df)
+    assert any("Loaded: (2, 1)" in record.message for record in caplog.records)
 
 
 # ------Assessment helpers (CORE_COLS, missing values)
