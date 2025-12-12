@@ -3,6 +3,7 @@ import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError, IntegrityError
 from src.db_engine import *
+from src.data_cleaner import clean_pipeline
 
 
 @pytest.fixture
@@ -10,8 +11,11 @@ def engine():
     """Fixture to create and yield a test database engine."""
     engine = get_engine("sqlite:///:memory:")  # In-memory DB for isolation
     Base.metadata.create_all(engine)
-    yield engine
-    Base.metadata.drop_all(engine)
+    try:
+        yield engine
+        Base.metadata.drop_all(engine)
+    finally:
+        engine.dispose() 
 
 
 @pytest.fixture
@@ -287,3 +291,230 @@ def test_flexible_filter_empty_filters(engine):
     filters = {}
     records = filter_by_columns(engine, ExampleTable, filters)
     assert len(records) == 2
+
+
+def df_from_records(records):
+    return pd.DataFrame(
+        [{"iso_code": r.iso_code, "country": r.country, "value": r.value} for r in records]
+    ).sort_values(["iso_code", "country"]).reset_index(drop=True)
+
+
+# ---------- update_record tests ----------
+
+def test_update_single_record_value(engine):
+    """Update a single record's value field and verify other fields remain unchanged."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    rows_updated = update_record(
+        engine,
+        ExampleTable,
+        filters={"iso_code": "AFG"},
+        updates={"value": 150.0},
+    )
+
+    assert rows_updated == 1
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.iso_code == "AFG"
+    assert rec.country == "Afghanistan"
+    assert rec.value == 150.0
+
+
+def test_update_record_no_match_does_not_change_table(engine):
+    """Ensure no rows are updated and table contents stay the same when the filter matches nothing."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    rows_updated = update_record(
+        engine,
+        ExampleTable,
+        filters={"iso_code": "XXX"},
+        updates={"value": 999.0},
+    )
+
+    assert rows_updated == 0
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+    assert records[0].value == 100.0
+
+
+def test_update_record_raises_when_filters_empty(engine):
+    """Raise ValueError when attempting an update without any filter conditions."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    with pytest.raises(ValueError):
+        update_record(
+            engine,
+            ExampleTable,
+            filters={},
+            updates={"value": 200.0},
+        )
+
+
+def test_update_record_raises_when_updates_empty(engine):
+    """Raise ValueError when attempting an update with no columns to update."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    with pytest.raises(ValueError):
+        update_record(
+            engine,
+            ExampleTable,
+            filters={"iso_code": "AFG"},
+            updates={},
+        )
+
+
+def test_update_record_raises_on_invalid_filter_column(engine):
+    """Raise ValueError if filters reference columns that do not exist on the model."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    with pytest.raises(ValueError) as excinfo:
+        update_record(
+            engine,
+            ExampleTable,
+            filters={"not_a_column": "x"},
+            updates={"value": 200.0},
+        )
+    assert "Invalid filter columns" in str(excinfo.value)
+
+
+def test_update_record_raises_on_invalid_update_column(engine):
+    """Raise ValueError if updates reference columns that do not exist on the model."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    with pytest.raises(ValueError) as excinfo:
+        update_record(
+            engine,
+            ExampleTable,
+            filters={"iso_code": "AFG"},
+            updates={"not_a_column": 200.0},
+        )
+    assert "Invalid update columns" in str(excinfo.value)
+
+
+def test_update_record_updates_multiple_rows(engine):
+    """Update multiple matching rows at once and verify all affected rows get the new value."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG1", "country": "Afghanistan", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 150.0})
+
+    rows_updated = update_record(
+        engine,
+        ExampleTable,
+        filters={"country": "Afghanistan"},
+        updates={"value": 200.0},
+    )
+
+    assert rows_updated == 2
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 2
+    assert all(r.value == 200.0 for r in records)
+
+
+def test_update_record_exception_triggers_rollback(engine):
+    """
+    Force an internal SQL error in update_record to exercise the except block
+    and ensure the table remains unchanged.
+    """
+    # Arrange: insert a valid row
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    # Assert: use an un-bindable value for 'value' to cause an exception
+    with pytest.raises(Exception):
+        update_record(
+            engine,
+            ExampleTable,
+            filters={"iso_code": "AFG"},
+            updates={"value": {"not": "serializable"}},  # bad type for DB
+        )
+
+    # Verify row is unchanged after rollback
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.iso_code == "AFG"
+    assert rec.country == "Afghanistan"
+    assert rec.value == 100.0
+
+
+# ---------- bulk_replace_table tests ----------
+
+def test_bulk_replace_table_on_empty_table(engine):
+    """Insert a full dataset into an empty table using bulk_replace_table."""
+    df = pd.DataFrame([
+        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
+        {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0},
+    ])
+
+    bulk_update_table(engine, ExampleTable, df)
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 2
+
+    data = {(r.iso_code, r.country): r.value for r in records}
+    assert data[("AFG", "Afghanistan")] == 100.0
+    assert data[("GBR", "United Kingdom")] == 200.0
+
+
+def test_bulk_replace_table_deletes_old_rows(engine):
+    """Replace existing rows so that old records are removed and only new ones remain."""
+    insert_record(engine, ExampleTable, {"iso_code": "OLD", "country": "Oldland", "value": 1.0})
+
+    df = pd.DataFrame([
+        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
+    ])
+
+    bulk_update_table(engine, ExampleTable, df)
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+    assert records[0].iso_code == "AFG"
+
+
+def test_bulk_replace_table_with_empty_dataframe_clears_table(engine):
+    """Clear all rows from the table when given an empty DataFrame."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    df_empty = pd.DataFrame(columns=["iso_code", "country", "value"])
+
+    bulk_update_table(engine, ExampleTable, df_empty)
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 0
+
+
+def test_create_record_raises_on_empty_record_data(engine):
+    """
+    Ensure an empty record_data dict raises a clear ValueError instead of doing nothing.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        insert_record(engine, ExampleTable, {})
+
+    assert "record_data cannot be empty" in str(excinfo.value)
+
+
+def test_bulk_replace_table_raises_on_missing_required_columns(engine):
+    """Raise an exception when DataFrame is missing required model columns."""
+    df = pd.DataFrame([
+        {"country": "Afghanistan", "value": 100.0},  # missing 'country'
+    ])
+
+    with pytest.raises(Exception):
+        bulk_update_table(engine, ExampleTable, df)
+
+
+def test_bulk_replace_table_idempotent_for_same_dataframe(engine):
+    """Running bulk_replace_table twice with the same DataFrame yields the same final table state."""
+    df = pd.DataFrame([
+        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
+    ])
+
+    bulk_update_table(engine, ExampleTable, df)
+    bulk_update_table(engine, ExampleTable, df)
+
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+    assert records[0].iso_code == "AFG"
+    assert records[0].value == 100.0
