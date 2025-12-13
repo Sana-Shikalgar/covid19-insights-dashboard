@@ -2,7 +2,9 @@
 
 import pandas as pd
 from typing import Optional
+import logging
 
+from src.logging_conf import log_activity
 from src.helper_data_cleaning import (
     clean_missing_core_metrics,
     impute_continent,
@@ -13,6 +15,10 @@ from src.helper_data_cleaning import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+@log_activity()
 def handle_missing_data(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     Handle missing values on a DataFrame that has already had high-missing /
@@ -28,18 +34,23 @@ def handle_missing_data(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     - Drop any remaining rows containing NaN
     """
     if df is None:
+        logger.error("handle_missing_data: The input DataFrame is None.")
         raise ValueError("Input DataFrame is None")
 
     if df.empty:
+        logger.warning("handle_missing_data: The input DataFrame is empty. Returning unchanged.")
         return df.copy() # Preserve columns but nothing to do
 
     df_clean = df.copy()
+    logger.info("handle_missing_data: Starting missing core metrics cleaning.")
 
     # Drop rows with missing core metrics (no imputation for these)
     df_clean = clean_missing_core_metrics(df_clean)
+    logger.info(f"handle_missing_data: Dropped rows with missing core metrics. Remaining rows: {len(df_clean)}.")
 
     # If everything is gone after dropping core metrics, short-circuit
     if df_clean.empty:
+        logger.warning("handle_missing_data: All rows dropped after removing missing core metrics. Returning empty DataFrame.")
         return df_clean
 
     # Impute continent if both columns present
@@ -52,10 +63,12 @@ def handle_missing_data(df: Optional[pd.DataFrame]) -> pd.DataFrame:
 
     # Final cleanup: drop any remaining rows with NaN
     df_clean = final_cleanup(df_clean)
+    logger.info(f"handle_missing_data: Final cleanup done. Rows remaining: {len(df_clean)}.")
 
     return df_clean
 
 
+@log_activity()
 def standardize_types(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     Standardize data types for a cleaned DataFrame:
@@ -66,9 +79,11 @@ def standardize_types(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     - Convert date to datetime (invalid strings → NaT)
     """
     if df is None:
+        logger.error("standardize_types: Input DataFrame is None.")
         raise ValueError("Input DataFrame is None")
 
     if df.empty:
+        logger.warning("standardize_types: Input DataFrame is empty. Returning unchanged.")
         return df.copy()
 
     df_std = df.copy()
@@ -79,16 +94,21 @@ def standardize_types(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     # Date conversion if date exists
     if "date" in df_std.columns:
         df_std = normalize_date_column(df_std)
+        logger.info("standardize_types: Normalized 'date' column to datetime.")
 
+    logger.info("standardize_types: Type standardization complete.")
     return df_std
 
 
+@log_activity()
 def clean_pipeline(df: pd.DataFrame) -> pd.DataFrame:
     """
     Full cleaning pipeline combining:
     1. handle_missing_data
     2. standardize_types
     """
+    logger.info("clean_pipeline: Starting full cleaning pipeline.")
     cleaned = handle_missing_data(df)
     final = standardize_types(cleaned)
+    logger.info("clean_pipeline: Full cleaning pipeline completed.")
     return final

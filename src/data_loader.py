@@ -9,9 +9,12 @@ from sqlalchemy import create_engine, text
 
 from src.db_engine import bulk_insert, bulk_update_table, create_dynamic_table, ensure_orm_model
 from src.helper_data_cleaning import normalize_date_column
+from src.logging_conf import log_activity
 
 logger = logging.getLogger(__name__)
 
+
+@log_activity()
 def load_csv_to_df(csv_path: Union[str, Path]) -> pd.DataFrame:
     """Load COVID CSV - raises clear FileNotFoundError."""
     path = Path(csv_path) if csv_path != "" else None
@@ -32,6 +35,8 @@ def load_csv_to_df(csv_path: Union[str, Path]) -> pd.DataFrame:
     logger.info(f"Loaded {len(df)} rows, {len(df.columns)} columns")
     return df
 
+
+@log_activity()
 def load_df_to_csv(df: pd.DataFrame, csv_path: str) -> None:
     """Write a DataFrame to CSV, raising if df is None or empty (DF -> CSV)."""
     if df is None or df.empty:
@@ -47,6 +52,8 @@ def load_df_to_csv(df: pd.DataFrame, csv_path: str) -> None:
         logger.error("load_df_to_csv failed for path %s: %s", csv_path, e)
         raise
 
+
+@log_activity()
 def load_db_to_df(engine: Engine, model_class: Type, columns: Sequence[str] | None = None) -> pd.DataFrame:
     """Load all rows from a table into a DataFrame."""
     orm_model = ensure_orm_model(model_class)
@@ -65,6 +72,8 @@ def load_db_to_df(engine: Engine, model_class: Type, columns: Sequence[str] | No
     finally:
         session.close()
 
+
+@log_activity()
 def load_df_to_db(engine: Engine, df: pd.DataFrame, table_name: str, model_class: Type | None = None) -> Type:
     """
     Persist a DataFrame into a database table.
@@ -120,6 +129,8 @@ def load_df_to_db(engine: Engine, df: pd.DataFrame, table_name: str, model_class
         )
         raise
 
+
+@log_activity()
 def load_csv_to_db(engine: Engine, csv_path: Union[str, Path], model_class) -> Dict[str, int]:
     """
     CSV -> DataFrame -> filter to model columns -> bulk_insert.
@@ -142,6 +153,8 @@ def load_csv_to_db(engine: Engine, csv_path: Union[str, Path], model_class) -> D
     )
     return result
 
+
+@log_activity()
 def load_db_to_csv(engine: Engine, model_class: Type, csv_path: str, columns: Sequence[str] | None = None) -> None:
     """Export a DB table to CSV via DataFrame (DB -> DF -> CSV)."""
     try:

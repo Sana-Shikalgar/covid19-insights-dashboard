@@ -1,10 +1,14 @@
 import pandas as pd
 from typing import List, Optional, Dict
+import logging 
+from src.logging_conf import log_activity
 
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------
 # Summary metrics (no grouping)
 # --------------------------------------------------
+@log_activity()
 def calculate_summary_metrics(
     df: pd.DataFrame,
     numeric_columns: Optional[List[str]] = None,
@@ -40,13 +44,14 @@ def calculate_summary_metrics(
         .reset_index()
         .rename(columns={"index": "metric"})
     )
-
+    logger.info(f"Calculate basic summury metrics for numeric columns in the Dataframe.")
     return summary_df
 
 
 # --------------------------------------------------
 # Grouped summary metrics
 # --------------------------------------------------
+@log_activity()
 def generate_grouped_summary(
     df: pd.DataFrame,
     group_by: List[str],
@@ -74,6 +79,7 @@ def generate_grouped_summary(
         A grouped summary DataFrame suitable for plotting or export.
     """
     if df.empty:
+        logger.warning("The dataframe is empty.")
         return pd.DataFrame()
 
     if numeric_columns is None:
@@ -92,12 +98,14 @@ def generate_grouped_summary(
         f"{col}_{metric}" for col, metric in grouped_df.columns
     ]
 
+    logger.info(f"Generate grouped summary statistics on: {group_by}")
     return grouped_df.reset_index()
 
 
 # --------------------------------------------------
 # Time trend analysis
 # --------------------------------------------------
+@log_activity()
 def generate_time_trend(
     df: pd.DataFrame,
     time_column: str,
@@ -128,6 +136,7 @@ def generate_time_trend(
         A DataFrame containing time-based trend values.
     """
     if df.empty:
+        logger.warning("The dataframe is empty.")
         return pd.DataFrame()
 
     data = df.copy()
@@ -163,12 +172,14 @@ def generate_time_trend(
                 .reset_index()
             )
 
+    logger.info(f"Generate time based trend on {group_by} via {time_column}")
     return trend_df
 
 
 # --------------------------------------------------
 # High-level analysis wrapper
 # --------------------------------------------------
+@log_activity()
 def run_analysis(
     df: pd.DataFrame,
     group_by: Optional[List[str]] = None,
@@ -207,5 +218,5 @@ def run_analysis(
             time_column=time_column,
             value_column=value_column,
         )
-
+    logger.info(f"Run complete summary.")
     return results
