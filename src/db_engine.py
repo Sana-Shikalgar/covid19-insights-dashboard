@@ -6,7 +6,7 @@ import pandas as pd
 from typing import List, Dict, Any, Type, Union
 import logging
 import warnings
-
+from src.logging_conf import log_activity
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore")
 Base = declarative_base()
 
 
+@log_activity()
 def get_engine(db_url: Optional[str] = None) -> create_engine:
     db_url = db_url or "sqlite:///health_data.db"
     engine = create_engine(
@@ -41,6 +42,26 @@ class ExampleTable(Base):
     iso_code = Column(String(100), nullable=False, unique=True)
     value = Column(Float, nullable=True)
     country = Column(String(255), nullable=True)
+
+
+# Similar to the actual db
+class SampleTable(Base):
+    """
+    Example table schema matching CORE_COLS for COVID data testing.
+    """
+    __tablename__ = "sample_table"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    iso_code = Column(String(10), nullable=False)
+    location = Column(String(100), nullable=True)
+    continent = Column(String(50), nullable=True)
+    date = Column(Date, nullable=True)
+    total_cases = Column(Float, nullable=True)
+    new_cases = Column(Float, nullable=True)
+    total_deaths = Column(Float, nullable=True)
+    new_deaths = Column(Float, nullable=True)
+    gdp_per_capita = Column(Float, nullable=True)
+    population = Column(Float, nullable=True)
 
 
 def ensure_orm_model(target: Any, base: Any = Base) -> Type[DeclarativeMeta]:
@@ -81,6 +102,7 @@ def infer_sqlalchemy_type(series):
 
 # CREATE
 # Creating a dynamic table schema using SQLAlchemy ORM
+@log_activity()
 def create_dynamic_table(engine: Engine, table_name: str, df: pd.DataFrame) -> Table:
     """
     Dynamically create table schema from pandas DataFrame (handles 67 fields automatically).
@@ -108,6 +130,7 @@ def create_dynamic_table(engine: Engine, table_name: str, df: pd.DataFrame) -> T
     return table
 
 
+@log_activity(message="Create new SQLAlchemy session.")
 def get_session(engine: Engine):
     """
     Create session factory with BEST PRACTICES: autoflush=False, autocommit=False.
@@ -123,7 +146,7 @@ def get_session(engine: Engine):
     return SessionLocal
 
 
-
+@log_activity(message="Insert a single record.")
 def insert_record(engine: Engine, model_class, record_data: dict) -> int:
     """
     Insert a single record using a SQLAlchemy ORM model class.
@@ -161,6 +184,7 @@ def insert_record(engine: Engine, model_class, record_data: dict) -> int:
         session.close()
 
 
+@log_activity(message="Bulk insert.")
 def bulk_insert(engine: Engine, model_class: Union[Type, Table], records: List[Dict[str, Any]]) -> Dict[str, int]:
     """
     Bulk insert records, handling duplicates by skipping them when using ORM.
@@ -221,6 +245,7 @@ def bulk_insert(engine: Engine, model_class: Union[Type, Table], records: List[D
         return {"inserted": inserted, "skipped": skipped}
 
 # READ
+@log_activity(message="Get all the records.")
 def get_all_records(engine: Engine, model_class) -> List[Any]:
     """
     Retrieve ALL records from the given model class.
@@ -244,6 +269,7 @@ def get_all_records(engine: Engine, model_class) -> List[Any]:
         session.close()
 
 
+@log_activity(message="Filter db with values.")
 def filter_by_col_values(engine: Engine, model_class, filters: Dict[str, Any]) -> List[Any]:
     """
     Filter records using .filter() on multiple columns.
@@ -284,6 +310,7 @@ def filter_by_col_values(engine: Engine, model_class, filters: Dict[str, Any]) -
 
 
 # UPDATE
+@log_activity(message="Update a single record.")
 def update_record(engine: Engine, model_class: Type, filters: Dict[str, Any], updates: Dict[str, Any]) -> int:
     """
     Update records in the given model_class table.
@@ -356,6 +383,7 @@ def update_record(engine: Engine, model_class: Type, filters: Dict[str, Any], up
         session.close()
 
 
+@log_activity(message="Bulk Update.")
 def bulk_update_table(engine: Engine, model_class: Type, df: pd.DataFrame) -> Boolean:
     """
     Replace all rows in the given table with rows from df.
@@ -390,5 +418,56 @@ def bulk_update_table(engine: Engine, model_class: Type, df: pd.DataFrame) -> Bo
         logger.error(f"bulk_replace_table failed for {model_class.__name__}: {e}")
         raise
 
+    finally:
+        session.close()
+
+
+# DELETE
+@log_activity(message="Delete record(s).")
+def delete_record(engine: Engine, model_class: Type, filters: Dict[str, Any]) -> int:
+    """
+    Delete records in the given model_class table based on filters.
+
+    Args:
+        engine: SQLAlchemy Engine (e.g., from get_engine)
+        model_class: ORM mapped class
+        filters: column_name -> value dict used in WHERE clause
+
+    Returns:
+        Number of rows deleted.
+
+    Raises:
+        ValueError if filters are missing or include invalid column names.
+    """
+    if not filters:
+        logger.error("delete_record called without any filter conditions; refusing full-table delete")
+        raise ValueError("At least one filter condition is required for delete_record.")
+
+    # Validate filter keys exist on the table
+    model_columns = {c.name for c in model_class.__table__.columns}
+    invalid_filters = [k for k in filters.keys() if k not in model_columns]
+    if invalid_filters:
+        logger.error(f"delete_record received invalid filter columns: {invalid_filters}")
+        raise ValueError(f"Invalid filter columns: {invalid_filters}")
+
+    SessionLocal = get_session(engine)
+    session = SessionLocal()
+    try:
+        query = session.query(model_class)
+        for col_name, value in filters.items():
+            column = getattr(model_class, col_name)
+            query = query.filter(column == value)
+        rows_deleted = query.delete(synchronize_session=False)
+        session.commit()
+        logger.info(
+            f"delete_record: deleted {rows_deleted} rows from {model_class.__name__} with filters={filters}"
+        )
+        return rows_deleted
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            f"delete_record failed for {model_class.__name__} with filters={filters}: {e}"
+        )
+        raise
     finally:
         session.close()

@@ -518,3 +518,61 @@ def test_bulk_replace_table_idempotent_for_same_dataframe(engine):
     assert len(records) == 1
     assert records[0].iso_code == "AFG"
     assert records[0].value == 100.0
+
+
+# --- Delete 
+class TestCovidData(Base):
+    __tablename__ = 'test_covid'
+    id = Column(Integer, primary_key=True)
+    iso_code = Column(String(3))
+    total_cases = Column(Integer)
+
+@pytest.fixture(scope="function")
+def engine():
+    """Create in-memory SQLite engine with test data."""
+    engine = create_engine('sqlite:///:memory:', echo=False)
+    Base.metadata.create_all(engine)
+    
+    # Insert test data
+    SessionLocal = sessionmaker(bind=engine)
+    session = SessionLocal()
+    test_data = [
+        TestCovidData(id=1, iso_code='IND', total_cases=1000),
+        TestCovidData(id=2, iso_code='IND', total_cases=1500),
+        TestCovidData(id=3, iso_code='USA', total_cases=2000),
+    ]
+    session.add_all(test_data)
+    session.commit()
+    session.close()
+    return engine
+
+def test_delete_record_single_match(engine):
+    """Test deleting single record with exact match."""
+    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'IND', 'total_cases': 1000})
+    assert rows_deleted == 1
+
+def test_delete_record_multiple_matches(engine):
+    """Test deleting multiple records matching filters."""
+    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'IND'})
+    assert rows_deleted == 2  # Both IND records
+
+def test_delete_record_no_matches(engine):
+    """Test deleting with no matching records."""
+    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'BRA'})
+    assert rows_deleted == 0
+
+def test_delete_record_invalid_column(engine):
+    """Test error on invalid column name."""
+    with pytest.raises(ValueError, match="Invalid filter columns"):
+        delete_record(engine, TestCovidData, {'country': 'India'})
+
+def test_delete_record_no_filters(engine):
+    """Test error when no filters provided."""
+    with pytest.raises(ValueError, match="At least one filter condition"):
+        delete_record(engine, TestCovidData, {})
+
+def test_delete_record_multiple_filters(engine):
+    """Test multiple filter conditions."""
+    # First ensure data exists
+    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'USA', 'total_cases': 2000})
+    assert rows_deleted == 1
