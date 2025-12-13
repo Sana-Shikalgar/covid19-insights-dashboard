@@ -36,7 +36,7 @@ def setup_logging(log_level: str = "INFO", log_file: str = None) -> logging.Logg
     # Configure logging
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format='%(asctime)s  [%(levelname)s]  %(name)s  (%(filename)s:%(lineno)d) - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.FileHandler(log_path, encoding='utf-8'),
@@ -73,14 +73,14 @@ def log_activity(message: str = None, log_level: str = "INFO"):
             else:
                 log_msg = message
             
-            # Add function arguments to log if they exist
-            if args or kwargs:
-                arg_info = []
-                if args:
-                    arg_info.append(f"args={args}")
-                if kwargs:
-                    arg_info.append(f"kwargs={kwargs}")
-                log_msg += f" ({', '.join(arg_info)})"
+            # # Add function arguments to log if they exist
+            # if args or kwargs:
+            #     arg_info = []
+            #     if args:
+            #         arg_info.append(f"args={args}")
+            #     if kwargs:
+            #         arg_info.append(f"kwargs={kwargs}")
+            #     log_msg += f"({', '.join(arg_info)})"
             
             # Log function start
             getattr(logger, log_level.lower())(f"START: {log_msg}")
