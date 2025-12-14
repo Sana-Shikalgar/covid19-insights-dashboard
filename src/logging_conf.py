@@ -1,28 +1,31 @@
 """
 Logging configuration module for the application.
-Provides centralized logging setup and activity logging functionality.
+Provides centralized logging setup and activity logging decorators.
 """
 
 import logging
-import os
 import functools
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 
 
-def setup_logging(log_level: str = "INFO", log_file: str = None) -> logging.Logger:
+# ==================== LOGGING SETUP ====================
+
+def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None) -> logging.Logger:
     """
-    Set up logging configuration with file and console handlers.
+    Set up application-wide logging configuration.
+    
+    Creates log directory and configures both file and console handlers.
     
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Optional custom log file name
+        log_file: Custom log filename (default: app_TIMESTAMP.log)
     
     Returns:
         Configured logger instance
     """
-    # Create log directory if it doesn't exist
+    # Create log directory
     log_dir = Path("log")
     log_dir.mkdir(exist_ok=True)
     
@@ -40,27 +43,39 @@ def setup_logging(log_level: str = "INFO", log_file: str = None) -> logging.Logg
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.FileHandler(log_path, encoding='utf-8'),
-            logging.StreamHandler()  # Also log to console
+            # logging.StreamHandler()  # Console output
         ],
-        force=True  # Override any existing configuration
+        force=True  # Override existing configuration
     )
     
     logger = logging.getLogger(__name__)
-    logger.info(f"Logging initialized. Log file: {log_path}")
+    logger.info(f"Logging initialized: {log_path}")
     
     return logger
 
 
-def log_activity(message: str = None, log_level: str = "INFO"):
+# ==================== ACTIVITY LOGGING DECORATOR ====================
+
+def log_activity(message: Optional[str] = None, log_level: str = "INFO"):
     """
-    Decorator to log function execution activity.
+    Decorator to log function execution lifecycle.
+    
+    Logs:
+    - Function start
+    - Successful completion
+    - Errors with exception details
     
     Args:
-        message: Custom log message. If None, uses function name
+        message: Custom log message (default: function name)
         log_level: Log level for the activity
     
     Returns:
         Decorated function
+    
+    Example:
+        @log_activity("Processing data")
+        def process_data(df):
+            return df.clean()
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
@@ -68,19 +83,7 @@ def log_activity(message: str = None, log_level: str = "INFO"):
             logger = logging.getLogger(__name__)
             
             # Generate log message
-            if message is None:
-                log_msg = f"Executing function: {func.__name__}"
-            else:
-                log_msg = message
-            
-            # # Add function arguments to log if they exist
-            # if args or kwargs:
-            #     arg_info = []
-            #     if args:
-            #         arg_info.append(f"args={args}")
-            #     if kwargs:
-            #         arg_info.append(f"kwargs={kwargs}")
-            #     log_msg += f"({', '.join(arg_info)})"
+            log_msg = message if message else f"Executing {func.__name__}"
             
             # Log function start
             getattr(logger, log_level.lower())(f"START: {log_msg}")
@@ -90,26 +93,33 @@ def log_activity(message: str = None, log_level: str = "INFO"):
                 result = func(*args, **kwargs)
                 
                 # Log successful completion
-                getattr(logger, log_level.lower())(f"SUCCESS: {func.__name__} completed successfully")
+                getattr(logger, log_level.lower())(f"SUCCESS: {func.__name__} completed")
                 
                 return result
-                
+            
             except Exception as e:
-                # Log error
-                logger.error(f"ERROR: {func.__name__} failed with exception: {str(e)}")
+                # Log error with exception details
+                logger.error(f"ERROR: {func.__name__} failed - {str(e)}")
                 raise
-                
+        
         return wrapper
     return decorator
 
 
-def log_user_action(action: str, details: dict = None) -> None:
+# ==================== USER ACTION LOGGING ====================
+
+def log_user_action(action: str, details: Optional[dict] = None) -> None:
     """
     Log user actions with structured format.
     
+    Use this for tracking user interactions in the GUI.
+    
     Args:
-        action: Description of the user action
-        details: Optional dictionary of additional details
+        action: Description of user action
+        details: Optional dictionary of additional context
+    
+    Example:
+        log_user_action("File uploaded", {"filename": "data.csv", "size": 1024})
     """
     logger = logging.getLogger(__name__)
     
@@ -117,19 +127,28 @@ def log_user_action(action: str, details: dict = None) -> None:
     
     if details:
         detail_str = ", ".join([f"{k}={v}" for k, v in details.items()])
-        log_message += f" | Details: {detail_str}"
+        log_message += f" | {detail_str}"
     
     logger.info(log_message)
 
 
-def log_summary_generation(summary_type: str, input_file: str, output_file: str = None) -> None:
+# ==================== SPECIALIZED LOGGING ====================
+
+def log_summary_generation(
+    summary_type: str,
+    input_file: str,
+    output_file: Optional[str] = None
+) -> None:
     """
-    Specifically log summary generation activities.
+    Log summary/report generation activities.
+    
+    NOTE: This function may be redundant with log_user_action().
+    Consider using log_user_action() directly instead.
     
     Args:
-        summary_type: Type of summary being generated
+        summary_type: Type of summary generated
         input_file: Input file path
-        output_file: Output file path (if applicable)
+        output_file: Output file path (optional)
     """
     details = {
         "summary_type": summary_type,
@@ -142,32 +161,41 @@ def log_summary_generation(summary_type: str, input_file: str, output_file: str 
     log_user_action("Summary Generation", details)
 
 
-# Initialize default logger
+# ==================== INITIALIZE DEFAULT LOGGER ====================
+
+# Create default logger on module import
 logger = setup_logging()
 
 
-# Example integration with existing functions
+# ==================== EXAMPLE FUNCTIONS ====================
+# NOTE: These example functions are not used in the application.
+# Consider removing if not needed for documentation purposes.
+
 @log_activity("Processing data file", "INFO")
 def process_data_file(file_path: str) -> dict:
-    """Example function showing logging integration."""
+    """
+    Example function demonstrating logging integration.
+    
+    NOTE: This is an example/documentation function.
+    Not used in actual application code.
+    """
     log_user_action("File Processing", {"file_path": file_path})
-    
-    # Simulate processing
     result = {"status": "processed", "file": file_path}
-    
     return result
 
 
 @log_activity("Generating summary report")
 def generate_summary(data: dict, summary_type: str = "basic") -> str:
-    """Example summary function with logging."""
+    """
+    Example summary function with logging.
+    
+    NOTE: This is an example/documentation function.
+    Not used in actual application code.
+    """
     log_summary_generation(
         summary_type=summary_type,
         input_file=data.get("file", "unknown"),
         output_file=f"summary_{summary_type}.txt"
     )
-
-    # Simulate summary generation
     summary = f"Summary of type {summary_type} generated"
-    
     return summary
