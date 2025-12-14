@@ -1,167 +1,261 @@
+"""
+Data loader module for CSV and database operations.
+Provides bidirectional conversion between CSV, DataFrame, and Database.
+
+NOTE: Dynamic table creation has been REMOVED.
+All operations use statically defined models from models.py
+"""
+
 import os
 import pandas as pd
 import logging
 from pathlib import Path
-from typing import Dict, Type, Sequence, Union
-from sqlalchemy import Engine, inspect
+from typing import Dict, Type, Sequence, Union, Optional
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, text
 
-from src.db_engine import bulk_insert, bulk_update_table, create_dynamic_table, ensure_orm_model
+from src.db_engine import bulk_insert, bulk_replace_table
 from src.helper_data_cleaning import normalize_date_column
 from src.logging_conf import log_activity
 
 logger = logging.getLogger(__name__)
 
 
+# ==================== CSV <-> DATAFRAME ====================
+
 @log_activity()
 def load_csv_to_df(csv_path: Union[str, Path]) -> pd.DataFrame:
-    """Load COVID CSV - raises clear FileNotFoundError."""
-    path = Path(csv_path) if csv_path != "" else None
-
-    if csv_path == "" or csv_path is None:
-        logger.error("CSV not found: empty path provided")
-        raise FileNotFoundError("CSV not found: empty path provided")
+    """
+    Load CSV file into pandas DataFrame.
     
+    Args:
+        csv_path: Path to CSV file
+    
+    Returns:
+        DataFrame with loaded data
+    
+    Raises:
+        FileNotFoundError: If CSV file doesn't exist or path is empty
+    """
+    # Handle empty or None path
+    if not csv_path or csv_path == "":
+        logger.error("CSV path is empty")
+        raise FileNotFoundError("CSV path cannot be empty")
+    
+    path = Path(csv_path)
+    
+    # Check file existence
     if not path.exists():
-        logger.error(f"CSV file not found at path: {path.absolute()}")
-        raise FileNotFoundError("CSV not found at specified path")
-
+        logger.error(f"CSV file not found: {path.absolute()}")
+        raise FileNotFoundError(f"CSV file not found: {path.absolute()}")
+    
+    # Load CSV
     df = pd.read_csv(path)
-
+    
+    # Normalize date column if present
     if "date" in df.columns:
-        normalize_date_column(df)
-
-    logger.info(f"Loaded {len(df)} rows, {len(df.columns)} columns")
+        df = normalize_date_column(df)
+    
+    logger.info(f"Loaded CSV: {len(df)} rows, {len(df.columns)} columns from {path.name}")
     return df
 
 
 @log_activity()
 def load_df_to_csv(df: pd.DataFrame, csv_path: str) -> None:
-    """Write a DataFrame to CSV, raising if df is None or empty (DF -> CSV)."""
+    """
+    Write DataFrame to CSV file.
+    
+    Args:
+        df: DataFrame to save
+        csv_path: Destination CSV path
+    
+    Raises:
+        ValueError: If DataFrame is None or empty
+    """
     if df is None or df.empty:
-        logger.error("load_df_to_csv called with empty or None DataFrame for path '%s'", csv_path)
+        logger.error(f"Cannot save empty DataFrame to {csv_path}")
         raise ValueError("DataFrame is empty or None")
     
     try:
-        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        # Create directory if it doesn't exist
+        dir_path = os.path.dirname(csv_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+        
+        # Save to CSV
         df.to_csv(csv_path, index=False)
-        logger.info("load_df_to_csv: wrote DataFrame to %s (rows=%d, cols=%d)", csv_path, len(df), len(df.columns))
+        
+        logger.info(f"Saved CSV: {len(df)} rows, {len(df.columns)} columns to {csv_path}")
     
     except Exception as e:
-        logger.error("load_df_to_csv failed for path %s: %s", csv_path, e)
+        logger.error(f"Failed to save CSV to {csv_path}: {e}")
         raise
 
+
+# ==================== DATABASE <-> DATAFRAME ====================
 
 @log_activity()
-def load_db_to_df(engine: Engine, model_class: Type, columns: Sequence[str] | None = None) -> pd.DataFrame:
-    """Load all rows from a table into a DataFrame."""
-    orm_model = ensure_orm_model(model_class)
+def load_db_to_df(
+    engine: Engine, 
+    model_class: Type, 
+    columns: Optional[Sequence[str]] = None
+) -> pd.DataFrame:
+    """
+    Load all rows from database table into DataFrame.
+    
+    Args:
+        engine: SQLAlchemy engine
+        model_class: ORM model class
+        columns: Optional list of columns to load (default: all except 'id')
+    
+    Returns:
+        DataFrame with table data
+    """
     session = Session(bind=engine)
+    
     try:
+        # Determine columns to load
         if columns is None:
-            columns = [c.name for c in model_class.columns if c.name != "id"]
-        rows = session.query(orm_model).all()
+            columns = [c.name for c in model_class.__table__.columns if c.name != "id"]
+        
+        # Query all rows
+        rows = session.query(model_class).all()
+        
+        # Convert to DataFrame
         data = [{col: getattr(row, col, None) for col in columns} for row in rows]
         df = pd.DataFrame(data).reset_index(drop=True)
-        logger.info("load_db_to_df: loaded %d rows and %d columns from %s", len(df), len(df.columns), model_class)
+        
+        table_name = getattr(model_class, "__tablename__", str(model_class))
+        logger.info(f"Loaded from DB: {len(df)} rows, {len(df.columns)} columns from {table_name}")
+        
         return df
+    
     except Exception as e:
-        logger.error("load_db_to_df failed for table %s: %s", getattr(model_class, "__tablename__", str(orm_model)), e)
+        table_name = getattr(model_class, "__tablename__", str(model_class))
+        logger.error(f"Failed to load from {table_name}: {e}")
         raise
+    
     finally:
         session.close()
 
 
 @log_activity()
-def load_df_to_db(engine: Engine, df: pd.DataFrame, table_name: str, model_class: Type | None = None) -> Type:
+def load_df_to_db(
+    engine: Engine, 
+    df: pd.DataFrame, 
+    model_class: Type
+) -> Type:
     """
-    Persist a DataFrame into a database table.
+    Persist DataFrame into database table.
+    
+    Uses bulk_replace_table to replace all contents.
+    Table must already exist (created via create_all_tables).
+    
+    Args:
+        engine: SQLAlchemy engine
+        df: DataFrame to save
+        model_class: ORM model class (table must exist)
+    
+    Returns:
+        The model_class used
+    
+    Raises:
+        ValueError: If DataFrame is None or empty
     """
     if df is None or df.empty:
-        logger.error("load_df_to_db called with empty or None DataFrame for table '%s'", table_name)
+        logger.error(f"Cannot save empty DataFrame to table")
         raise ValueError("DataFrame is empty or None")
-
+    
     try:
-        # Dynamic path: no model_class supplied
-        if model_class is None:
-            TargetTable = create_dynamic_table(engine, table_name, df)
-            bulk_insert(engine, TargetTable, df.to_dict(orient="records"))
-            logger.info(
-                "load_df_to_db: created table %s and inserted %d rows",
-                TargetTable.name,
-                len(df),
-            )
-            return TargetTable
-
-        # ORM model path: decide based on table existence
-        table = model_class.__table__
-        inspector = inspect(engine)
-        existing_tables = inspector.get_table_names(schema=table.schema)
-        actual_name = table.name
-
-        if actual_name in existing_tables:
-            # Table exists -> bulk replace contents
-            bulk_update_table(engine, model_class, df)
-            logger.info(
-                "load_df_to_db: bulk-updated existing table %s with %d rows",
-                actual_name,
-                len(df),
-            )
-            return model_class
-
-        # Table does not exist yet: create from df for schema, then insert via ORM model
-        TargetTable = create_dynamic_table(engine, table_name, df)
-        bulk_insert(engine, model_class, df.to_dict(orient="records"))
-        logger.info(
-            "load_df_to_db: created new table %s and inserted %d rows",
-            TargetTable.name,
-            len(df),
-        )
+        # Replace table contents
+        bulk_replace_table(engine, model_class, df)
+        logger.info(f"Loaded DataFrame to {model_class.__tablename__}: {len(df)} rows")
         return model_class
-
+    
     except Exception as e:
-        logger.error(
-            "load_df_to_db failed for target '%s' (model=%s): %s",
-            table_name,
-            getattr(model_class, "__name__", "None"),
-            e,
-        )
+        logger.error(f"Failed to save to {model_class.__tablename__}: {e}")
         raise
 
 
+# ==================== CSV <-> DATABASE (Combined Operations) ====================
+
 @log_activity()
-def load_csv_to_db(engine: Engine, csv_path: Union[str, Path], model_class) -> Dict[str, int]:
+def load_csv_to_db(
+    engine: Engine, 
+    csv_path: Union[str, Path], 
+    model_class: Type,
+    filter_columns: bool = True
+) -> Dict[str, int]:
     """
-    CSV -> DataFrame -> filter to model columns -> bulk_insert.
+    Load CSV directly into database table.
+    
+    Args:
+        engine: SQLAlchemy engine
+        csv_path: Path to CSV file
+        model_class: ORM model class
+        filter_columns: If True, filter DataFrame to only model columns
+    
+    Returns:
+        Dictionary with 'inserted' and 'skipped' counts
     """
+    # Load CSV
     df = load_csv_to_df(csv_path)
-
-    # Filter only columns that exist on the model
-    valid_cols = [c.name for c in model_class.__table__.c if c.name in df.columns]
-    df_filtered = df[valid_cols]
-
+    
+    # Filter to valid columns if requested
+    if filter_columns:
+        valid_cols = [c.name for c in model_class.__table__.columns 
+                     if c.name in df.columns and c.name != 'id']
+        df_filtered = df[valid_cols]
+    else:
+        df_filtered = df.drop(columns=['id'], errors='ignore')
+    
+    # Bulk insert
     records = df_filtered.to_dict(orient="records")
     result = bulk_insert(engine, model_class, records)
-
+    
     logger.info(
-        "Loaded %d rows into %s: %d inserted, %d skipped",
-        len(df_filtered),
-        model_class.__tablename__,
-        result["inserted"],
-        result["skipped"],
+        f"CSV->DB: {result['inserted']} inserted, {result['skipped']} skipped "
+        f"into {model_class.__tablename__}"
     )
+    
     return result
 
 
 @log_activity()
-def load_db_to_csv(engine: Engine, model_class: Type, csv_path: str, columns: Sequence[str] | None = None) -> None:
-    """Export a DB table to CSV via DataFrame (DB -> DF -> CSV)."""
+def load_db_to_csv(
+    engine: Engine, 
+    model_class: Type, 
+    csv_path: str, 
+    columns: Optional[Sequence[str]] = None
+) -> None:
+    """
+    Export database table to CSV file.
+    Allows empty tables to be exported (schema-only CSV).
+    """
     try:
+        # Load from database
         df = load_db_to_df(engine, model_class, columns)
-        load_df_to_csv(df=df, csv_path=csv_path)
-        logger.info("load_db_to_csv: exported table %s to %s (rows=%d, cols=%d)", model_class, csv_path, len(df), len(df.columns))
-    
+
+        # Ensure destination directory exists
+        csv_path = Path(csv_path)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # If no rows but we know the schema, construct an empty DF with columns
+        if df.empty:
+            if columns is not None:
+                col_names = list(columns)
+            else:
+                # get column names from ORM model
+                col_names = [c.name for c in model_class.__table__.columns]
+            df = pd.DataFrame(columns=col_names)
+
+        # Write CSV directly (empty allowed)
+        df.to_csv(csv_path, index=False)
+
+        table_name = getattr(model_class, "__tablename__", str(model_class))
+        logger.info(f"Exported {table_name} to {csv_path}: {len(df)} rows")
+
     except Exception as e:
-        logger.error("load_db_to_csv failed for table %s to path %s: %s", getattr(model_class, "__tablename__", str(model_class)), csv_path, e)
+        table_name = getattr(model_class, "__tablename__", str(model_class))
+        logger.error(f"Failed to export {table_name} to {csv_path}: {e}")
         raise
