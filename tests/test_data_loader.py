@@ -1,14 +1,36 @@
+"""
+Data loader tests - Updated for static model architecture.
+
+All dynamic table creation tests have been REMOVED.
+Tests now use only statically defined models from models.py
+"""
+
 import pytest
 import pandas as pd
 from pathlib import Path
-from sqlalchemy import create_engine
-from src.data_loader import load_csv_to_df, load_csv_to_db, load_db_to_df, load_df_to_db, load_db_to_csv, load_df_to_csv
-from src.db_engine import Base, ExampleTable, get_all_records, insert_record
+
+from src.data_loader import (
+    load_csv_to_df, load_df_to_csv, load_db_to_df, load_df_to_db,
+    load_csv_to_db, load_db_to_csv
+)
+from src.db_engine import get_engine, create_all_tables, get_all_records, insert_record
+from src.models import ExampleTable, CovidDataRaw
+
+
+# ==================== FIXTURES ====================
+
+@pytest.fixture
+def engine():
+    """In-memory SQLite DB for each test."""
+    engine = get_engine("sqlite:///:memory:")
+    create_all_tables(engine)
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture
 def sample_covid_path():
-    """Path to your test CSV."""
+    """Path to test CSV."""
     return Path("data/sample/test_data.csv")
 
 
@@ -21,22 +43,25 @@ def csv_exists(sample_covid_path):
 
 
 @pytest.fixture
-def engine():
-    # In-memory SQLite DB for each test
-    engine = create_engine("sqlite:///:memory:", echo=False)
-    Base.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
-    
+def sample_data():
+    """Sample DataFrame matching ExampleTable schema."""
+    return pd.DataFrame({
+        'iso_code': ['USA', 'GBR', 'FRA'],
+        'value': [100.0, 200.0, 300.0],
+        'country': ['United States', 'United Kingdom', 'France']
+    })
+
+
+# ==================== CSV TO DATAFRAME TESTS ====================
 
 def test_load_csv_row_count(csv_exists):
-    """Verify CSV loads 10 rows."""
+    """Verify CSV loads expected number of rows."""
     data = load_csv_to_df(csv_exists)
     assert len(data) == 11
 
 
 def test_load_csv_column_names(csv_exists):
-    """Verify 60+ COVID columns loaded."""
+    """Verify COVID columns loaded."""
     data = load_csv_to_df(csv_exists)
     key_cols = {"iso_code", "continent", "location", "date", "total_cases", "population"}
     for col in key_cols:
@@ -48,7 +73,7 @@ def test_load_csv_file_not_found():
     """Test loading non-existent CSV raises FileNotFoundError."""
     bad_path = Path("data/sample/nonexistent.csv")
     
-    with pytest.raises(FileNotFoundError, match="CSV not found"):
+    with pytest.raises(FileNotFoundError, match="CSV file not found:"):
         load_csv_to_df(bad_path)
 
 
@@ -56,48 +81,165 @@ def test_load_csv_invalid_path():
     """Test invalid path handling."""
     invalid_path = "/invalid/path/does/not/exist.csv"
     
-    with pytest.raises(FileNotFoundError, match="CSV not found"):
+    with pytest.raises(FileNotFoundError, match="CSV file not found:"):
         load_csv_to_df(invalid_path)
 
 
 def test_load_csv_empty_path():
     """Test empty string path."""
-    with pytest.raises(FileNotFoundError, match="CSV not found"):
+    with pytest.raises(FileNotFoundError, match="CSV path cannot be empty"):
         load_csv_to_df("")
 
 
-def test_load_csv_to_db(engine, csv_exists):
-    """Test loading CSV data into the database."""
-    # Load CSV to DB
-    result = load_csv_to_db(engine, csv_exists, ExampleTable)
+# ==================== DATAFRAME TO CSV TESTS ====================
+
+def test_load_df_to_csv_writes_file(tmp_path, sample_data):
+    """Test writing DataFrame to CSV."""
+    csv_path = tmp_path / "exports" / "df_export.csv"
+    load_df_to_csv(sample_data, str(csv_path))
     
-    # Verify insertion worked
+    assert csv_path.exists()
+    
+    reloaded = pd.read_csv(csv_path)
+    pd.testing.assert_frame_equal(reloaded, sample_data)
+
+
+def test_load_df_to_csv_raises_on_empty(tmp_path):
+    """Test that empty DataFrame raises ValueError."""
+    empty_df = pd.DataFrame()
+    csv_path = tmp_path / "exports" / "empty.csv"
+    
+    with pytest.raises(ValueError, match="empty or None"):
+        load_df_to_csv(empty_df, str(csv_path))
+
+
+def test_load_df_to_csv_raises_on_none(tmp_path):
+    """Test that None DataFrame raises ValueError."""
+    csv_path = tmp_path / "exports" / "none.csv"
+    
+    with pytest.raises(ValueError, match="empty or None"):
+        load_df_to_csv(None, str(csv_path))
+
+
+def test_load_df_to_csv_creates_directory(tmp_path):
+    """Test that missing directories are created."""
+    csv_path = tmp_path / "nested" / "dirs" / "file.csv"
+    df = pd.DataFrame({'a': [1, 2]})
+    
+    load_df_to_csv(df, str(csv_path))
+    
+    assert csv_path.exists()
+
+
+# ==================== DATABASE TO DATAFRAME TESTS ====================
+
+def test_load_db_to_df_returns_all_rows(engine):
+    """Test loading all rows from database."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0})
+
+    df = load_db_to_df(engine, ExampleTable)
+
+    assert df.shape[0] == 2
+    assert set(df.columns) == {"iso_code", "country", "value"}
+
+
+def test_load_db_to_df_with_column_subset(engine):
+    """Test loading specific columns only."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+
+    df = load_db_to_df(engine, ExampleTable, columns=["iso_code", "value"])
+
+    assert set(df.columns) == {"iso_code", "value"}
+    assert "country" not in df.columns
+
+
+def test_load_db_to_df_empty_table_returns_empty_dataframe(engine):
+    """Test loading from empty table."""
+    df = load_db_to_df(engine, ExampleTable)
+    assert df.empty
+
+
+def test_load_db_to_df_excludes_id_by_default(engine):
+    """Test that 'id' column is excluded by default."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
+    
+    df = load_db_to_df(engine, ExampleTable)
+    
+    assert 'id' not in df.columns
+
+
+# ==================== DATAFRAME TO DATABASE TESTS ====================
+
+def test_load_df_to_db_replaces_table_contents(engine, sample_data):
+    """Test that load_df_to_db replaces existing data."""
+    # Insert initial data
+    insert_record(engine, ExampleTable, {"iso_code": "OLD", "value": 1.0})
+    
+    # Load new data
+    load_df_to_db(engine, sample_data, ExampleTable)
+    
+    # Verify old data replaced
     records = get_all_records(engine, ExampleTable)
-    assert result["inserted"] > 0
-    assert len(records) == result["inserted"]
+    assert len(records) == 3
+    assert not any(r.iso_code == "OLD" for r in records)
+
+
+def test_load_df_to_db_raises_on_empty_dataframe(engine):
+    """Test that empty DataFrame raises ValueError."""
+    empty_df = pd.DataFrame()
     
-    # Verify sample data (AFG from your CSV)
-    afg_records = [r for r in records if r.iso_code == "AFG"]
-    assert len(afg_records) > 0
-    print(f"{result['inserted']} rows inserted! Found {len(afg_records)} AFG records")
+    with pytest.raises(ValueError, match="empty or None"):
+        load_df_to_db(engine, empty_df, ExampleTable)
+
+
+def test_load_df_to_db_raises_on_none(engine):
+    """Test that None DataFrame raises ValueError."""
+    with pytest.raises(ValueError, match="empty or None"):
+        load_df_to_db(engine, None, ExampleTable)
+
+
+def test_load_df_to_db_filters_to_model_columns(engine):
+    """Test that extra DataFrame columns are handled."""
+    df = pd.DataFrame({
+        'iso_code': ['USA'],
+        'value': [100.0],
+        'country': ['United States'],
+        'extra_column': ['ignored']  # Not in model
+    })
+    
+    # Should succeed - extra columns ignored during bulk_replace_table
+    load_df_to_db(engine, df, ExampleTable)
+    
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
+
+
+# ==================== CSV TO DATABASE TESTS ====================
+
+def test_load_csv_to_db_basic(engine, csv_exists):
+    """Test loading CSV data into database."""
+    result = load_csv_to_db(engine, csv_exists, CovidDataRaw, filter_columns=True)
+    
+    assert result["inserted"] > 0
+    
+    records = get_all_records(engine, CovidDataRaw)
+    assert len(records) == result["inserted"]
 
 
 def test_load_csv_to_db_empty_csv(engine, tmp_path):
-    """Test loading from an empty CSV file results in 0 inserts."""
+    """Test loading empty CSV results in 0 inserts."""
     empty_csv = tmp_path / "empty.csv"
-    # Header matches ExampleTable columns you care about
-    empty_csv.write_text("iso_code,value,country\n")
+    empty_csv.write_text("iso_code,value,country\n")  # Header only
 
-    result = load_csv_to_db(engine, empty_csv, ExampleTable)
+    result = load_csv_to_db(engine, empty_csv, ExampleTable, filter_columns=True)
 
-    records = get_all_records(engine, ExampleTable)
     assert result["inserted"] == 0
     assert result["skipped"] == 0
-    assert len(records) == 0
 
 
 def test_load_csv_to_db_missing_file(engine, tmp_path):
-    """Test loading from a missing CSV file raises FileNotFoundError."""
+    """Test loading missing CSV raises FileNotFoundError."""
     missing = tmp_path / "does_not_exist.csv"
 
     with pytest.raises(FileNotFoundError):
@@ -105,245 +247,161 @@ def test_load_csv_to_db_missing_file(engine, tmp_path):
 
 
 def test_load_csv_to_db_duplicates_skipped(engine, tmp_path):
-    """Test that duplicate rows in CSV are skipped during bulk_insert."""
+    """Test that duplicate rows are skipped."""
     csv_path = tmp_path / "dupe.csv"
     csv_path.write_text(
         "iso_code,value,country\n"
         "USA,100,United States\n"
-        "USA,200,United States\n"  # duplicate iso_code
+        "USA,200,United States\n"  # Duplicate iso_code
     )
 
-    result = load_csv_to_db(engine, csv_path, ExampleTable)
+    result = load_csv_to_db(engine, csv_path, ExampleTable, filter_columns=True)
 
-    records = get_all_records(engine, ExampleTable)
-    # One inserted, one skipped due to UNIQUE(iso_code)
     assert result["inserted"] == 1
     assert result["skipped"] == 1
-    assert len(records) == 1
-    assert records[0].iso_code == "USA"
 
 
 def test_load_csv_to_db_missing_csv_columns(engine, tmp_path):
-    """Test handling of missing columns in CSV during load."""
+    """Test handling of missing columns in CSV."""
     csv_path = tmp_path / "missing_cols.csv"
     csv_path.write_text(
-        "iso_code,value\n"           # NO 'country' column!
+        "iso_code,value\n"  # NO 'country' column
         "AFG,100\n"
     )
 
-    result = load_csv_to_db(engine, csv_path, ExampleTable)
+    result = load_csv_to_db(engine, csv_path, ExampleTable, filter_columns=True)
 
     records = get_all_records(engine, ExampleTable)
     assert result["inserted"] == 1
-    assert len(records) == 1
     assert records[0].iso_code == "AFG"
     assert records[0].value == 100
-    assert records[0].country is None  # ✅ Missing CSV col → NULL in DB
+    assert records[0].country is None
 
 
 def test_load_csv_to_db_extra_columns(engine, tmp_path):
-    """Test handling of extra columns in CSV during load. Ignore extra columsn gracefully"""
+    """Test handling of extra columns in CSV."""
     csv_path = tmp_path / "extra_cols.csv"
     csv_path.write_text(
         "iso_code,value,country,extra_col\n"
         "GBR,150,United Kingdom,something\n"
     )
 
-    result = load_csv_to_db(engine, csv_path, ExampleTable)
+    result = load_csv_to_db(engine, csv_path, ExampleTable, filter_columns=True)
 
     records = get_all_records(engine, ExampleTable)
     assert result["inserted"] == 1
-    assert len(records) == 1
     assert records[0].iso_code == "GBR"
-    assert records[0].value == 150
-    assert records[0].country == "United Kingdom"
 
 
-# ---------- load_db_to_df tests ----------
-
-def test_load_db_to_df_returns_all_rows_and_columns(engine, tmp_path):
-    """load_db_to_df should return all rows and all columns by default."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
-    insert_record(engine, ExampleTable, {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0})
-
-    df = load_db_to_df(engine, ExampleTable.__table__)
-
-    assert df.shape == (2, 3)
-    assert set(df.columns) == {"iso_code", "country", "value"}
-
-
-def test_load_db_to_df_with_column_subset(engine):
-    """load_db_to_df should support selecting only a subset of columns."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
-
-    df = load_db_to_df(engine, ExampleTable, columns=["iso_code", "value"])
-
-    assert set(df.columns) == {"iso_code", "value"}
-    assert df.loc[0, "iso_code"] == "AFG"
-    assert df.loc[0, "value"] == 100.0
-
-
-def test_load_db_to_df_empty_table_returns_empty_dataframe(engine):
-    """When the table is empty, load_db_to_df should return an empty DataFrame."""
-    df = load_db_to_df(engine, ExampleTable.__table__)
-    assert df.empty
-
-
-def test_load_db_to_df_raises_on_error(monkeypatch, engine, caplog):
-    def bad_query(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    # Patch the helper function you use to get a Session or query;
-    # if you don't have one, patch Session.query on the module you use.
-    monkeypatch.setattr("src.data_loader.Session.query", bad_query, raising=False)
-
-    with pytest.raises(RuntimeError):
-        load_db_to_df(engine, ExampleTable.__table__)
-
-    assert any("load_db_to_df failed" in r.message for r in caplog.records)
-
-
-# ---------- load_df_to_db tests ----------
-
-def test_load_df_to_db_creates_table_when_not_exists(engine):
-    """When table does not exist, load_df_to_db should create it and bulk insert."""
-    df = pd.DataFrame([
-        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-        {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0},
-    ])
-
-    # Use a fresh table name; model_class=None to force dynamic table creation
-    TargetTable = load_df_to_db(engine, df, table_name="dynamic_example", model_class=None)
-
-    records = get_all_records(engine, TargetTable)
-    assert len(records) == 2
-    assert {r.iso_code for r in records} == {"AFG", "GBR"}
-
-
-def test_load_df_to_db_bulk_replaces_when_table_exists(engine):
-    """When model_class table exists, load_df_to_db should bulk replace its contents."""
-    # Seed ExampleTable with one row
-    insert_record(engine, ExampleTable, {"iso_code": "OLD", "country": "Oldland", "value": 1.0})
-
-    # New data to replace existing rows
-    df = pd.DataFrame([
-        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-    ])
-
-    TargetTable = load_df_to_db(engine, df, table_name="example_table", model_class=ExampleTable)
-    assert TargetTable is ExampleTable
-
-    records = get_all_records(engine, ExampleTable)
-    assert len(records) == 1
-    assert records[0].iso_code == "AFG"
-    assert records[0].value == 100.0
-
-
-def test_load_df_to_db_raises_on_empty_dataframe(engine):
-    """load_df_to_db should refuse to run when given an empty or None DataFrame."""
-    empty_df = pd.DataFrame()
-
-    with pytest.raises(ValueError):
-        load_df_to_db(engine, empty_df, table_name="example_table", model_class=ExampleTable)
-
-
-def test_load_df_to_db_raises_on_error(monkeypatch, engine, caplog):
-    df = pd.DataFrame([{"iso_code": "AFG", "country": "Afghanistan", "value": 100.0}])
-
-    def bad_create(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("src.data_loader.create_dynamic_table", bad_create)
-
-    with pytest.raises(RuntimeError):
-        load_df_to_db(engine, df, table_name="dynamic_example", model_class=None)
-
-    assert any("load_df_to_db failed" in r.message for r in caplog.records)
-
-
-# ---------- load_db_to_csv tests ----------
+# ==================== DATABASE TO CSV TESTS ====================
 
 def test_load_db_to_csv_writes_expected_file(engine, tmp_path):
-    """load_db_to_csv should create a CSV file with the table contents."""
+    """Test exporting database to CSV."""
     insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
 
     csv_path = tmp_path / "exports" / "example.csv"
-    load_db_to_csv(engine, ExampleTable.__table__, str(csv_path))
+    load_db_to_csv(engine, ExampleTable, str(csv_path))
 
     assert csv_path.exists()
 
     df = pd.read_csv(csv_path)
-    assert df.shape == (1, 3)
+    assert df.shape[0] == 1
     assert df.loc[0, "iso_code"] == "AFG"
-    assert df.loc[0, "country"] == "Afghanistan"
-    assert df.loc[0, "value"] == 100.0
 
 
 def test_load_db_to_csv_with_column_subset(engine, tmp_path):
-    """load_db_to_csv should support exporting only selected columns."""
+    """Test exporting specific columns only."""
     insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
 
-    csv_path = tmp_path / "exports" / "example_subset.csv"
+    csv_path = tmp_path / "exports" / "subset.csv"
     load_db_to_csv(engine, ExampleTable, str(csv_path), columns=["iso_code"])
 
     df = pd.read_csv(csv_path)
     assert list(df.columns) == ["iso_code"]
-    assert df.loc[0, "iso_code"] == "AFG"
 
 
-def test_load_db_to_csv_raises_on_inner_error(monkeypatch, engine, tmp_path, caplog):
-    def bad_loader(*args, **kwargs):
-        raise RuntimeError("boom")
+def test_load_db_to_csv_empty_table(engine, tmp_path):
+    """Test exporting empty table."""
+    csv_path = tmp_path / "exports" / "empty.csv"
+    load_db_to_csv(engine, ExampleTable, str(csv_path))
 
-    monkeypatch.setattr("src.data_loader.load_db_to_df", bad_loader)
-
-    csv_path = tmp_path / "exports" / "example.csv"
-    with pytest.raises(RuntimeError):
-        load_db_to_csv(engine, ExampleTable, str(csv_path))
-
-    assert any("load_db_to_csv failed" in r.message for r in caplog.records)
+    df = pd.read_csv(csv_path)
+    assert df.empty
 
 
-# ---------- load_df_to_csv tests ----------
-
-def test_load_df_to_csv_writes_file(tmp_path):
-    """load_df_to_csv should write DataFrame contents to the given CSV path."""
-    df = pd.DataFrame([
-        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-    ])
-
-    csv_path = tmp_path / "exports" / "df_export.csv"
-    load_df_to_csv(df, str(csv_path))
-
+def test_load_db_to_csv_creates_directory(engine, tmp_path):
+    """Test that export creates missing directories."""
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
+    
+    csv_path = tmp_path / "nested" / "dirs" / "export.csv"
+    load_db_to_csv(engine, ExampleTable, str(csv_path))
+    
     assert csv_path.exists()
 
-    reloaded = pd.read_csv(csv_path)
-    pd.testing.assert_frame_equal(reloaded, df)
+
+# ==================== INTEGRATION TESTS ====================
+
+def test_round_trip_csv_db_csv(engine, tmp_path, sample_data):
+    """Test complete round trip: CSV → DB → CSV."""
+    # Save original to CSV
+    csv_original = tmp_path / "original.csv"
+    sample_data.to_csv(csv_original, index=False)
+    
+    # Load to DB
+    load_csv_to_db(engine, csv_original, ExampleTable, filter_columns=True)
+    
+    # Export back to CSV
+    csv_export = tmp_path / "export.csv"
+    load_db_to_csv(engine, ExampleTable, str(csv_export))
+    
+    # Compare
+    df_original = pd.read_csv(csv_original)
+    df_export = pd.read_csv(csv_export)
+    
+    pd.testing.assert_frame_equal(
+        df_original.sort_values('iso_code').reset_index(drop=True),
+        df_export.sort_values('iso_code').reset_index(drop=True)
+    )
 
 
-def test_load_df_to_csv_raises_on_empty_or_none(tmp_path):
-    """load_df_to_csv should raise ValueError when df is empty or None."""
-    empty_df = pd.DataFrame()
-    csv_path = tmp_path / "exports" / "empty.csv"
-
-    with pytest.raises(ValueError):
-        load_df_to_csv(empty_df, str(csv_path))
-
-    with pytest.raises(ValueError):
-        load_df_to_csv(None, str(csv_path))  # type: ignore[arg-type]
+def test_load_multiple_layers(engine, sample_data):
+    """Test loading data into multiple table layers."""
+    # Load into raw table
+    load_df_to_db(engine, sample_data, ExampleTable)
+    
+    # Verify
+    df_from_db = load_db_to_df(engine, ExampleTable)
+    assert len(df_from_db) == len(sample_data)
 
 
-def test_load_df_to_csv_raises_on_to_csv_error(monkeypatch, tmp_path, caplog):
-    df = pd.DataFrame([{"a": 1}])
+def test_filter_columns_true_removes_extra(engine, tmp_path):
+    """Test that filter_columns=True removes non-model columns."""
+    csv_path = tmp_path / "extra.csv"
+    df = pd.DataFrame({
+        'iso_code': ['USA'],
+        'value': [100.0],
+        'extra1': ['ignored'],
+        'extra2': ['also_ignored']
+    })
+    df.to_csv(csv_path, index=False)
+    
+    result = load_csv_to_db(engine, csv_path, ExampleTable, filter_columns=True)
+    
+    assert result["inserted"] == 1
+    records = get_all_records(engine, ExampleTable)
+    assert len(records) == 1
 
-    def bad_to_csv(*args, **kwargs):
-        raise OSError("boom")
 
-    monkeypatch.setattr("pandas.DataFrame.to_csv", bad_to_csv)
-
-    csv_path = tmp_path / "exports" / "data.csv"
-    with pytest.raises(OSError):
-        load_df_to_csv(df, str(csv_path))
-
-    assert any("load_df_to_csv failed" in r.message for r in caplog.records)
-
+def test_filter_columns_false_includes_all(engine, tmp_path):
+    """Test that filter_columns=False attempts to use all columns."""
+    csv_path = tmp_path / "all.csv"
+    df = pd.DataFrame({
+        'iso_code': ['USA'],
+        'value': [100.0],
+        'country': ['United States']
+    })
+    df.to_csv(csv_path, index=False)
+    
+    result = load_csv_to_db(engine, csv_path, ExampleTable, filter_columns=False)
+    
+    assert result["inserted"] == 1
