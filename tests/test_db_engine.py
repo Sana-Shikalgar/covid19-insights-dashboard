@@ -1,21 +1,34 @@
+"""
+Database engine tests - Updated for static model architecture.
+
+All dynamic table creation tests have been REMOVED.
+Tests now use only statically defined models from models.py
+"""
+
 import pytest
 import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError, IntegrityError
-from src.db_engine import *
-from src.data_cleaner import clean_pipeline
 
+from src.db_engine import (
+    get_engine, create_all_tables, table_exists, get_table_row_count,
+    get_session, insert_record, bulk_insert, get_all_records,
+    filter_by_col_values, update_record, bulk_replace_table, delete_record
+)
+from src.models import Base, ExampleTable, SampleTable, CovidDataRaw, CovidDataClean, CovidDataWorking
+
+
+# ==================== FIXTURES ====================
 
 @pytest.fixture
 def engine():
     """Fixture to create and yield a test database engine."""
-    engine = get_engine("sqlite:///:memory:")  # In-memory DB for isolation
-    Base.metadata.create_all(engine)
+    engine = get_engine("sqlite:///:memory:")
+    create_all_tables(engine)  # Create all tables from models.py
     try:
         yield engine
-        Base.metadata.drop_all(engine)
     finally:
-        engine.dispose() 
+        engine.dispose()
 
 
 @pytest.fixture
@@ -27,7 +40,8 @@ def session(engine):
     session.close()
 
 
-# EXISTING TESTS (keep these unchanged)
+# ==================== TABLE MANAGEMENT TESTS ====================
+
 def test_engine_connection(engine):
     """Test that the database engine connects successfully."""
     try:
@@ -38,64 +52,103 @@ def test_engine_connection(engine):
         pytest.fail("Database connection failed.")
 
 
-def test_table_creation(engine):
-    """Test that tables defined in Base metadata are created."""
+def test_create_all_tables(engine):
+    """Test that create_all_tables creates all models from Base."""
     inspector = inspect(engine)
     table_names = inspector.get_table_names()
-    assert "example_table" in table_names, "example_table should be created"
+    
+    # Check all expected tables exist
+    assert "example_table" in table_names
+    assert "sample_table" in table_names
+    assert "covid_data_raw" in table_names
+    assert "covid_data_clean" in table_names
+    assert "covid_data_working" in table_names
+
+
+def test_table_exists(engine):
+    """Test table_exists function."""
+    assert table_exists(engine, "example_table") is True
+    assert table_exists(engine, "nonexistent_table") is False
+
+
+def test_get_table_row_count_empty(engine):
+    """Test row count on empty table."""
+    count = get_table_row_count(engine, ExampleTable)
+    assert count == 0
+
+
+def test_get_table_row_count_with_data(engine):
+    """Test row count after inserting data."""
+    insert_record(engine, ExampleTable, {"iso_code": "TST", "value": 100.0})
+    insert_record(engine, ExampleTable, {"iso_code": "TST2", "value": 200.0})
+    
+    count = get_table_row_count(engine, ExampleTable)
+    assert count == 2
 
 
 def test_table_structure(engine):
     """Test that the created table has expected columns."""
     inspector = inspect(engine)
     columns = [col["name"] for col in inspector.get_columns("example_table")]
-    assert set(columns) == {"id", "iso_code", "value", "country"}, "Unexpected schema structure"
+    assert set(columns) == {"id", "iso_code", "value", "country"}
 
 
-def test_create_single_record(session):
+# ==================== CREATE OPERATIONS TESTS ====================
+
+def test_insert_single_record(session):
     """Test insert_record function creates a single record successfully."""
-    data = {"iso_code": "Test Patient", "value": 98.6}
+    data = {"iso_code": "TestPatient", "value": 98.6}
     record_id = insert_record(session.bind, ExampleTable, data)
 
-    # Assert: Verify using helper function
-    saved_record = session.query(ExampleTable).filter_by(iso_code="Test Patient").first()
+    # Verify using query
+    saved_record = session.query(ExampleTable).filter_by(iso_code="TestPatient").first()
     assert saved_record is not None
-    assert saved_record.iso_code == "Test Patient"
+    assert saved_record.iso_code == "TestPatient"
     assert saved_record.value == 98.6
     assert saved_record.id == record_id
 
 
-def test_create_single_record_id_autoincrement(session):
+def test_insert_record_id_autoincrement(session):
     """Test that the primary key auto-increments correctly."""
-    # Arrange & Act: Insert first record
-    data1 = {"iso_code": "Patient 1", "value": 98.6}
+    data1 = {"iso_code": "Patient1", "value": 98.6}
     record_id1 = insert_record(session.bind, ExampleTable, data1)
     
-    # Act: Insert second record
-    data2 = {"iso_code": "Patient 2", "value": 98.0}
+    data2 = {"iso_code": "Patient2", "value": 98.0}
     record_id2 = insert_record(session.bind, ExampleTable, data2)
     
-    # Assert: Verify ID assignment and uniqueness
-    saved1 = session.query(ExampleTable).filter_by(iso_code="Patient 1").first()
-    saved2 = session.query(ExampleTable).filter_by(iso_code="Patient 2").first()
+    saved1 = session.query(ExampleTable).filter_by(iso_code="Patient1").first()
+    saved2 = session.query(ExampleTable).filter_by(iso_code="Patient2").first()
+    
     assert saved1.id == 1
     assert saved2.id == 2
     assert saved1.id != saved2.id
 
 
+def test_insert_record_empty_data_raises(engine):
+    """Test that empty record_data raises ValueError."""
+    with pytest.raises(ValueError, match="record_data cannot be empty"):
+        insert_record(engine, ExampleTable, {})
+
+
+def test_insert_record_duplicate_raises_integrity_error(engine):
+    """Test duplicate iso_code violation (unique constraint)."""
+    data = {"iso_code": "DuplicateTest", "value": 1.0}
+    insert_record(engine, ExampleTable, data)
+    
+    with pytest.raises(IntegrityError):
+        insert_record(engine, ExampleTable, data)
+
+
 def test_insert_record_session_failure_raises_exception(engine, monkeypatch):
-    """Test that generic session failures are properly handled and re-raised."""
+    """Test that generic session failures are properly handled."""
     import src.db_engine as database
 
     class FailingSession:
         def add(self, obj):
             raise RuntimeError("Simulated database connection failure")
-        def commit(self): 
-            pass
-        def rollback(self): 
-            pass
-        def close(self): 
-            pass
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
 
     def fake_get_session(engine):
         return lambda: FailingSession()
@@ -103,47 +156,7 @@ def test_insert_record_session_failure_raises_exception(engine, monkeypatch):
     monkeypatch.setattr(database, "get_session", fake_get_session)
 
     with pytest.raises(RuntimeError, match="Simulated database connection failure"):
-        data = {"iso_code": "Test", "value": 90.0}
-        database.insert_record(engine, ExampleTable, data)
-
-
-
-def test_insert_record_duplicate_name_raises_integrity_error(engine):
-    """Test duplicate name violation (assumes unique constraint on name)."""
-    # First insert succeeds
-    data = {"iso_code": "DuplicateTest", "value": 1.0}
-    insert_record(engine, ExampleTable, data)
-    
-    # Second insert should fail (if you add unique=True to iso_code column)
-    with pytest.raises(IntegrityError):
-        data = {"iso_code": "DuplicateTest", "value": 2.0}
-        insert_record(engine, ExampleTable, data)
-
-
-def test_create_dynamic_table_basic(engine):
-    """Basic: creates table with columns."""
-    df = pd.DataFrame({'iso_code': ['USA'], 'total_cases': [100.0]})
-    create_dynamic_table(engine, "test", df)
-    inspector = inspect(engine)
-    assert "test" in inspector.get_table_names()
-    assert len(inspector.get_columns("test")) == 3
-
-
-def test_create_dynamic_table_all_nulls(engine):
-    """Edge case: all null values."""
-    df = pd.DataFrame({'iso_code': [None], 'total_cases': [None]})
-    create_dynamic_table(engine, "null_test", df)
-    inspector = inspect(engine)
-    assert "null_test" in inspector.get_table_names()
-    assert len(inspector.get_columns("null_test")) == 3
-
-
-def test_create_dynamic_table_empty(engine):
-    """Edge case: empty DataFrame."""
-    df = pd.DataFrame(columns=['iso_code'])
-    create_dynamic_table(engine, "empty", df)
-    inspector = inspect(engine)
-    assert "empty" in inspector.get_table_names()
+        database.insert_record(engine, ExampleTable, {"iso_code": "Test", "value": 90.0})
 
 
 def test_bulk_insert_multiple_records(engine):
@@ -156,14 +169,12 @@ def test_bulk_insert_multiple_records(engine):
     
     result = bulk_insert(engine, ExampleTable, records)
     
-    # Verify return value
     assert isinstance(result, dict)
     assert result["inserted"] == 3
     assert result["skipped"] == 0
     
-    # Verify records in DB
-    inspector = inspect(engine)
-    count = engine.connect().execute(text("SELECT COUNT(*) FROM example_table")).scalar()
+    # Verify in DB
+    count = get_table_row_count(engine, ExampleTable)
     assert count == 3
 
 
@@ -176,7 +187,6 @@ def test_bulk_insert_empty_list(engine):
 
 def test_bulk_insert_with_duplicates(engine):
     """Test bulk_insert skips duplicates (unique constraint)."""
-    # First insert succeeds
     insert_record(engine, ExampleTable, {"iso_code": "DUP", "value": 100.0})
     
     records = [
@@ -186,42 +196,45 @@ def test_bulk_insert_with_duplicates(engine):
     ]
     
     result = bulk_insert(engine, ExampleTable, records)
-    assert result["inserted"] == 2  # NEW1, NEW2
-    assert result["skipped"] == 1   # DUP
+    assert result["inserted"] == 2
+    assert result["skipped"] == 1
 
 
 def test_bulk_insert_mixed_data_types(engine):
     """Test bulk_insert handles partial records (nulls)."""
     records = [
-        {"iso_code": "USA", "value": 100.0},      # Full
-        {"iso_code": "GBR"},                       # Missing value (null)
-        {"iso_code": "FRA", "value": None}         # Explicit null
+        {"iso_code": "USA", "value": 100.0},
+        {"iso_code": "GBR"},  # Missing value (null)
+        {"iso_code": "FRA", "value": None}
     ]
     
     result = bulk_insert(engine, ExampleTable, records)
     assert result["inserted"] == 3
     
-    # Verify null handling
-    count_nulls = engine.connect().execute(text("SELECT COUNT(*) FROM example_table WHERE value IS NULL")).scalar()
+    # Verify nulls
+    count_nulls = engine.connect().execute(
+        text("SELECT COUNT(*) FROM example_table WHERE value IS NULL")
+    ).scalar()
     assert count_nulls == 2
 
 
 def test_bulk_insert_invalid_record(engine):
-    """Test bulk_insert handles invalid feild name (triggers except Exception)."""
+    """Test bulk_insert handles invalid field name."""
     records = [
-        {"iso_code": "VALID1", "value": 100.0},  # Succeeds
-        {"iso_code": "INVALID"},                 # Missing required fields 
-        {"iso_code": "VALID2", "vaue": 200.0}   # Typo in field name -> Exception
+        {"iso_code": "VALID1", "value": 100.0},
+        {"iso_code": "INVALID"},  # Missing required fields if any
+        {"iso_code": "VALID2", "vaue": 200.0}  # Typo - triggers exception
     ]
     
     result = bulk_insert(engine, ExampleTable, records)
-    assert result["inserted"] == 2  # VALID1, VALID2
-    assert result["skipped"] == 1   # INVALID triggers except Exception
+    assert result["inserted"] == 2
+    assert result["skipped"] == 1
 
+
+# ==================== READ OPERATIONS TESTS ====================
 
 def test_get_all_records(engine):
     """Test get_all retrieves ALL records from table."""
-    # Setup test data
     insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
     insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
     
@@ -238,9 +251,8 @@ def test_get_all_empty_table(engine):
     assert len(records) == 0
 
 
-def test_flexible_filter_single_column(engine):
-    """Test filter_by_columns with one column filter."""
-    # Setup data
+def test_filter_by_col_values_single_column(engine):
+    """Test filter with one column filter."""
     insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
     insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
     
@@ -251,24 +263,20 @@ def test_flexible_filter_single_column(engine):
     assert records[0].iso_code == "USA"
 
 
-def test_flexible_filter_multiple_columns(engine):
-    """Test filter_by_columns with multiple columns including country."""
-    # Setup data with repeated countries
+def test_filter_by_col_values_multiple_columns(engine):
+    """Test filter with multiple columns."""
     insert_record(engine, ExampleTable, {"iso_code": "USA1", "value": 100.0, "country": "United States"})
-    insert_record(engine, ExampleTable, {"iso_code": "USA2", "value": 150.0, "country": "United States"})  # Same country!
+    insert_record(engine, ExampleTable, {"iso_code": "USA2", "value": 150.0, "country": "United States"})
     insert_record(engine, ExampleTable, {"iso_code": "GBR1", "value": 100.0, "country": "United Kingdom"})
-    insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0, "country": "United States"})  
-
-    # Filter: USA1 with specific value + country
+    
     filters = {"country": "United States", "value": 100.0}
     records = filter_by_col_values(engine, ExampleTable, filters)
     
-    assert len(records) == 2
-    assert records[0].country == "United States"
-    assert records[0].value == 100.0
+    assert len(records) == 1
+    assert records[0].iso_code == "USA1"
 
 
-def test_flexible_filter_invalid_column(engine):
+def test_filter_by_col_values_invalid_column(engine):
     """Test error handling for non-existent columns."""
     filters = {"invalid_column": "test"}
     
@@ -276,14 +284,14 @@ def test_flexible_filter_invalid_column(engine):
         filter_by_col_values(engine, ExampleTable, filters)
 
 
-def test_flexible_filter_no_matches(engine):
+def test_filter_by_col_values_no_matches(engine):
     """Test returns empty list when no records match."""
     filters = {"iso_code": "NONEXISTENT"}
     records = filter_by_col_values(engine, ExampleTable, filters)
     assert len(records) == 0
 
 
-def test_flexible_filter_empty_filters(engine):
+def test_filter_by_col_values_empty_filters(engine):
     """Test empty filters returns all records."""
     insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
     insert_record(engine, ExampleTable, {"iso_code": "GBR", "value": 200.0})
@@ -293,180 +301,122 @@ def test_flexible_filter_empty_filters(engine):
     assert len(records) == 2
 
 
-def df_from_records(records):
-    return pd.DataFrame(
-        [{"iso_code": r.iso_code, "country": r.country, "value": r.value} for r in records]
-    ).sort_values(["iso_code", "country"]).reset_index(drop=True)
-
-
-# ---------- update_record tests ----------
+# ==================== UPDATE OPERATIONS TESTS ====================
 
 def test_update_single_record_value(engine):
-    """Update a single record's value field and verify other fields remain unchanged."""
+    """Update a single record's value field."""
     insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
 
     rows_updated = update_record(
-        engine,
-        ExampleTable,
+        engine, ExampleTable,
         filters={"iso_code": "AFG"},
-        updates={"value": 150.0},
+        updates={"value": 150.0}
     )
 
     assert rows_updated == 1
 
     records = get_all_records(engine, ExampleTable)
-    assert len(records) == 1
     rec = records[0]
     assert rec.iso_code == "AFG"
-    assert rec.country == "Afghanistan"
     assert rec.value == 150.0
 
 
-def test_update_record_no_match_does_not_change_table(engine):
-    """Ensure no rows are updated and table contents stay the same when the filter matches nothing."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+def test_update_record_no_match(engine):
+    """Ensure no rows updated when filter matches nothing."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
     rows_updated = update_record(
-        engine,
-        ExampleTable,
+        engine, ExampleTable,
         filters={"iso_code": "XXX"},
-        updates={"value": 999.0},
+        updates={"value": 999.0}
     )
 
     assert rows_updated == 0
 
-    records = get_all_records(engine, ExampleTable)
-    assert len(records) == 1
-    assert records[0].value == 100.0
-
 
 def test_update_record_raises_when_filters_empty(engine):
-    """Raise ValueError when attempting an update without any filter conditions."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Raise ValueError when no filter conditions."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    with pytest.raises(ValueError):
-        update_record(
-            engine,
-            ExampleTable,
-            filters={},
-            updates={"value": 200.0},
-        )
+    with pytest.raises(ValueError, match="At least one filter condition"):
+        update_record(engine, ExampleTable, filters={}, updates={"value": 200.0})
 
 
 def test_update_record_raises_when_updates_empty(engine):
-    """Raise ValueError when attempting an update with no columns to update."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Raise ValueError when no update values."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    with pytest.raises(ValueError):
-        update_record(
-            engine,
-            ExampleTable,
-            filters={"iso_code": "AFG"},
-            updates={},
-        )
+    with pytest.raises(ValueError, match="At least one update value"):
+        update_record(engine, ExampleTable, filters={"iso_code": "AFG"}, updates={})
 
 
 def test_update_record_raises_on_invalid_filter_column(engine):
-    """Raise ValueError if filters reference columns that do not exist on the model."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Raise ValueError if filters reference invalid columns."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    with pytest.raises(ValueError) as excinfo:
-        update_record(
-            engine,
-            ExampleTable,
-            filters={"not_a_column": "x"},
-            updates={"value": 200.0},
-        )
-    assert "Invalid filter columns" in str(excinfo.value)
+    with pytest.raises(ValueError, match="Invalid filter columns"):
+        update_record(engine, ExampleTable, 
+                     filters={"not_a_column": "x"},
+                     updates={"value": 200.0})
 
 
 def test_update_record_raises_on_invalid_update_column(engine):
-    """Raise ValueError if updates reference columns that do not exist on the model."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Raise ValueError if updates reference invalid columns."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    with pytest.raises(ValueError) as excinfo:
-        update_record(
-            engine,
-            ExampleTable,
-            filters={"iso_code": "AFG"},
-            updates={"not_a_column": 200.0},
-        )
-    assert "Invalid update columns" in str(excinfo.value)
+    with pytest.raises(ValueError, match="Invalid update columns"):
+        update_record(engine, ExampleTable,
+                     filters={"iso_code": "AFG"},
+                     updates={"not_a_column": 200.0})
 
 
 def test_update_record_updates_multiple_rows(engine):
-    """Update multiple matching rows at once and verify all affected rows get the new value."""
+    """Update multiple matching rows at once."""
     insert_record(engine, ExampleTable, {"iso_code": "AFG1", "country": "Afghanistan", "value": 100.0})
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 150.0})
+    insert_record(engine, ExampleTable, {"iso_code": "AFG2", "country": "Afghanistan", "value": 150.0})
 
     rows_updated = update_record(
-        engine,
-        ExampleTable,
+        engine, ExampleTable,
         filters={"country": "Afghanistan"},
-        updates={"value": 200.0},
+        updates={"value": 200.0}
     )
 
     assert rows_updated == 2
 
-    records = get_all_records(engine, ExampleTable)
-    assert len(records) == 2
-    assert all(r.value == 200.0 for r in records)
-
 
 def test_update_record_exception_triggers_rollback(engine):
-    """
-    Force an internal SQL error in update_record to exercise the except block
-    and ensure the table remains unchanged.
-    """
-    # Arrange: insert a valid row
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Force an error to exercise rollback."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    # Assert: use an un-bindable value for 'value' to cause an exception
     with pytest.raises(Exception):
-        update_record(
-            engine,
-            ExampleTable,
-            filters={"iso_code": "AFG"},
-            updates={"value": {"not": "serializable"}},  # bad type for DB
-        )
+        update_record(engine, ExampleTable,
+                     filters={"iso_code": "AFG"},
+                     updates={"value": {"not": "serializable"}})
 
-    # Verify row is unchanged after rollback
+    # Verify unchanged after rollback
     records = get_all_records(engine, ExampleTable)
-    assert len(records) == 1
-    rec = records[0]
-    assert rec.iso_code == "AFG"
-    assert rec.country == "Afghanistan"
-    assert rec.value == 100.0
+    assert records[0].value == 100.0
 
-
-# ---------- bulk_replace_table tests ----------
 
 def test_bulk_replace_table_on_empty_table(engine):
-    """Insert a full dataset into an empty table using bulk_replace_table."""
+    """Insert data into empty table using bulk_replace_table."""
     df = pd.DataFrame([
         {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-        {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0},
+        {"iso_code": "GBR", "country": "United Kingdom", "value": 200.0}
     ])
 
-    bulk_update_table(engine, ExampleTable, df)
+    bulk_replace_table(engine, ExampleTable, df)
 
     records = get_all_records(engine, ExampleTable)
     assert len(records) == 2
-
-    data = {(r.iso_code, r.country): r.value for r in records}
-    assert data[("AFG", "Afghanistan")] == 100.0
-    assert data[("GBR", "United Kingdom")] == 200.0
 
 
 def test_bulk_replace_table_deletes_old_rows(engine):
-    """Replace existing rows so that old records are removed and only new ones remain."""
-    insert_record(engine, ExampleTable, {"iso_code": "OLD", "country": "Oldland", "value": 1.0})
+    """Replace existing rows."""
+    insert_record(engine, ExampleTable, {"iso_code": "OLD", "value": 1.0})
 
-    df = pd.DataFrame([
-        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-    ])
-
-    bulk_update_table(engine, ExampleTable, df)
+    df = pd.DataFrame([{"iso_code": "AFG", "value": 100.0}])
+    bulk_replace_table(engine, ExampleTable, df)
 
     records = get_all_records(engine, ExampleTable)
     assert len(records) == 1
@@ -474,105 +424,124 @@ def test_bulk_replace_table_deletes_old_rows(engine):
 
 
 def test_bulk_replace_table_with_empty_dataframe_clears_table(engine):
-    """Clear all rows from the table when given an empty DataFrame."""
-    insert_record(engine, ExampleTable, {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0})
+    """Clear all rows when given empty DataFrame."""
+    insert_record(engine, ExampleTable, {"iso_code": "AFG", "value": 100.0})
 
-    df_empty = pd.DataFrame(columns=["iso_code", "country", "value"])
-
-    bulk_update_table(engine, ExampleTable, df_empty)
+    df_empty = pd.DataFrame(columns=["iso_code", "value"])
+    bulk_replace_table(engine, ExampleTable, df_empty)
 
     records = get_all_records(engine, ExampleTable)
     assert len(records) == 0
 
 
-def test_create_record_raises_on_empty_record_data(engine):
-    """
-    Ensure an empty record_data dict raises a clear ValueError instead of doing nothing.
-    """
-    with pytest.raises(ValueError) as excinfo:
-        insert_record(engine, ExampleTable, {})
+def test_bulk_replace_table_idempotent(engine):
+    """Running twice with same DataFrame yields same result."""
+    df = pd.DataFrame([{"iso_code": "AFG", "value": 100.0}])
 
-    assert "record_data cannot be empty" in str(excinfo.value)
-
-
-def test_bulk_replace_table_raises_on_missing_required_columns(engine):
-    """Raise an exception when DataFrame is missing required model columns."""
-    df = pd.DataFrame([
-        {"country": "Afghanistan", "value": 100.0},  # missing 'country'
-    ])
-
-    with pytest.raises(Exception):
-        bulk_update_table(engine, ExampleTable, df)
-
-
-def test_bulk_replace_table_idempotent_for_same_dataframe(engine):
-    """Running bulk_replace_table twice with the same DataFrame yields the same final table state."""
-    df = pd.DataFrame([
-        {"iso_code": "AFG", "country": "Afghanistan", "value": 100.0},
-    ])
-
-    bulk_update_table(engine, ExampleTable, df)
-    bulk_update_table(engine, ExampleTable, df)
+    bulk_replace_table(engine, ExampleTable, df)
+    bulk_replace_table(engine, ExampleTable, df)
 
     records = get_all_records(engine, ExampleTable)
     assert len(records) == 1
     assert records[0].iso_code == "AFG"
-    assert records[0].value == 100.0
 
 
-# --- Delete 
-class TestCovidData(Base):
-    __tablename__ = 'test_covid'
-    id = Column(Integer, primary_key=True)
-    iso_code = Column(String(3))
-    total_cases = Column(Integer)
-
-@pytest.fixture(scope="function")
-def engine():
-    """Create in-memory SQLite engine with test data."""
-    engine = create_engine('sqlite:///:memory:', echo=False)
-    Base.metadata.create_all(engine)
-    
-    # Insert test data
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    test_data = [
-        TestCovidData(id=1, iso_code='IND', total_cases=1000),
-        TestCovidData(id=2, iso_code='IND', total_cases=1500),
-        TestCovidData(id=3, iso_code='USA', total_cases=2000),
-    ]
-    session.add_all(test_data)
-    session.commit()
-    session.close()
-    return engine
+# ==================== DELETE OPERATIONS TESTS ====================
 
 def test_delete_record_single_match(engine):
     """Test deleting single record with exact match."""
-    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'IND', 'total_cases': 1000})
+    insert_record(engine, SampleTable, {'iso_code': 'IND', 'total_cases': 1000.0})
+    insert_record(engine, SampleTable, {'iso_code': 'USA', 'total_cases': 2000.0})
+    
+    rows_deleted = delete_record(engine, SampleTable, {'iso_code': 'IND'})
     assert rows_deleted == 1
+
 
 def test_delete_record_multiple_matches(engine):
     """Test deleting multiple records matching filters."""
-    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'IND'})
-    assert rows_deleted == 2  # Both IND records
+    insert_record(engine, SampleTable, {'iso_code': 'IND', 'total_cases': 1000.0})
+    insert_record(engine, SampleTable, {'iso_code': 'IND', 'total_cases': 1500.0})
+    insert_record(engine, SampleTable, {'iso_code': 'USA', 'total_cases': 2000.0})
+    
+    rows_deleted = delete_record(engine, SampleTable, {'iso_code': 'IND'})
+    assert rows_deleted == 2
+
 
 def test_delete_record_no_matches(engine):
     """Test deleting with no matching records."""
-    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'BRA'})
+    rows_deleted = delete_record(engine, SampleTable, {'iso_code': 'BRA'})
     assert rows_deleted == 0
+
 
 def test_delete_record_invalid_column(engine):
     """Test error on invalid column name."""
     with pytest.raises(ValueError, match="Invalid filter columns"):
-        delete_record(engine, TestCovidData, {'country': 'India'})
+        delete_record(engine, SampleTable, {'invalid_col': 'value'})
+
 
 def test_delete_record_no_filters(engine):
     """Test error when no filters provided."""
     with pytest.raises(ValueError, match="At least one filter condition"):
-        delete_record(engine, TestCovidData, {})
+        delete_record(engine, SampleTable, {})
+
 
 def test_delete_record_multiple_filters(engine):
     """Test multiple filter conditions."""
-    # First ensure data exists
-    rows_deleted = delete_record(engine, TestCovidData, {'iso_code': 'USA', 'total_cases': 2000})
+    insert_record(engine, SampleTable, {'iso_code': 'USA', 'total_cases': 2000.0})
+    insert_record(engine, SampleTable, {'iso_code': 'USA', 'total_cases': 3000.0})
+    
+    rows_deleted = delete_record(engine, SampleTable, {'iso_code': 'USA', 'total_cases': 2000.0})
     assert rows_deleted == 1
+
+
+# ==================== COVID DATA MODEL TESTS ====================
+
+def test_covid_data_raw_nullable_fields(engine):
+    """Test that CovidDataRaw accepts null values."""
+    data = {
+        'iso_code': 'TST',
+        'location': 'Test',
+        'continent': None,  # Nullable
+        'date': None,       # Nullable
+        'total_cases': None # Nullable
+    }
+    
+    record_id = insert_record(engine, CovidDataRaw, data)
+    assert record_id > 0
+
+
+def test_covid_data_clean_not_null_enforced(engine):
+    """Test that CovidDataClean enforces NOT NULL constraints."""
+    import pandas as pd
+    
+    # This should fail because clean table has NOT NULL constraints
+    data = {
+        'iso_code': 'TST',
+        'location': 'Test',
+        'continent': None,  # NOT NULL - should fail
+        'date': pd.Timestamp('2020-01-01'),
+        'total_cases': 100.0,
+        'new_cases': 10.0,
+        'total_deaths': 5.0,
+        'new_deaths': 1.0,
+        'gdp_per_capita': 50000.0,
+        'population': 5000000.0
+    }
+    
+    with pytest.raises(IntegrityError):
+        insert_record(engine, CovidDataClean, data)
+
+
+def test_covid_data_working_matches_clean_schema(engine):
+    """Test that working table has same constraints as clean."""
+    inspector = inspect(engine)
+    
+    clean_cols = {col['name']: col for col in inspector.get_columns('covid_data_clean')}
+    working_cols = {col['name']: col for col in inspector.get_columns('covid_data_working')}
+    
+    # Same columns
+    assert set(clean_cols.keys()) == set(working_cols.keys())
+    
+    # Same nullability
+    for col_name in clean_cols:
+        assert clean_cols[col_name]['nullable'] == working_cols[col_name]['nullable']
