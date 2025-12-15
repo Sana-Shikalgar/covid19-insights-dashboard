@@ -15,30 +15,33 @@ A comprehensive Python-based Data Insights Dashboard for analyzing and visualizi
 ## Project Structure
 
 ```
-src/
-├── data_loader.py          # CSV and database import/export operations
-├── data_cleaner.py         # Data cleaning and validation
-├── data_analyzer.py        # Data analysis and aggregation
-├── data_visualization.py   # Matplotlib-based plotting functions
-├── db_engine.py            # SQLAlchemy database operations
-├── models.py               # SQLAlchemy ORM models
-├── pipeline_integration.py # ETL pipeline orchestration
-├── helper_data_cleaning.py # Data cleaning utilities
-└── logging_conf.py         # Logging configuration
+    src/
+    ├── data_loader.py          # CSV and database import/export operations
+    ├── data_cleaner.py         # Data cleaning and validation
+    ├── data_analyzer.py        # Data analysis and aggregation
+    ├── data_visualization.py   # Matplotlib-based plotting functions
+    ├── db_engine.py            # SQLAlchemy database operations
+    ├── models.py               # SQLAlchemy ORM models
+    ├── pipeline_integration.py # ETL pipeline orchestration
+    ├── helper_data_cleaning.py # Data cleaning utilities
+    └── logging_conf.py         # Logging configuration
 
-tests/
-├── test_data_loader.py
-├── test_data_cleaner.py
-├── test_data_analyzer.py
-├── test_data_visualization.py
-├── test_db_engine.py
-├── test_pipeline_integration.py
-└── test_helper_data_cleaning.py
+    tests/
+    ├── test_data_loader.py
+    ├── test_data_cleaner.py
+    ├── test_data_analyzer.py
+    ├── test_data_visualization.py
+    ├── test_db_engine.py
+    ├── test_pipeline_integration.py
+    └── test_helper_data_cleaning.py
 
-data/
-├── raw/                    # Raw data files
-├── cleaned/                # Processed clean data
-└── sample/                 # Test data
+    data/
+    ├── raw/                    # Raw data files
+    ├── cleaned/                # Processed clean data
+    └── sample/                 # Test data
+
+└── cli_dashboard.py
+└── pytest.ini
 ```
 
 ## Requirements
