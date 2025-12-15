@@ -39,6 +39,22 @@ def session(engine):
     session.rollback()
     session.close()
 
+# ====================== GET ENGINE TEST ==========================
+
+def test_get_engine_creates_folder(tmp_path, monkeypatch):
+    """Ensure get_engine creates db directory if not exists and returns engine."""
+    db_dir = tmp_path / "db_dir"
+    engine = get_engine(db_dir=str(db_dir))
+    
+    # Directory should be created
+    assert db_dir.exists() and db_dir.is_dir()
+    
+    # Engine should be SQLAlchemy engine
+    from sqlalchemy.engine import Engine
+    assert isinstance(engine, Engine)
+    
+    # Cleanup
+    engine.dispose()
 
 # ==================== TABLE MANAGEMENT TESTS ====================
 
@@ -251,6 +267,17 @@ def test_get_all_empty_table(engine):
     assert len(records) == 0
 
 
+def test_get_all_records_no_limit_returns_all(engine):
+    """Test get_all_records fetches all records when limit=None."""
+    # Insert some records
+    insert_record(engine, ExampleTable, {"iso_code": "A", "value": 1.0})
+    insert_record(engine, ExampleTable, {"iso_code": "B", "value": 2.0})
+    
+    records = get_all_records(engine, ExampleTable, limit=None)
+    assert len(records) == 2
+    assert set(r.iso_code for r in records) == {"A", "B"}
+
+
 def test_filter_by_col_values_single_column(engine):
     """Test filter with one column filter."""
     insert_record(engine, ExampleTable, {"iso_code": "USA", "value": 100.0})
@@ -446,6 +473,31 @@ def test_bulk_replace_table_idempotent(engine):
     assert records[0].iso_code == "AFG"
 
 
+def test_bulk_replace_table_exception_rolls_back(monkeypatch, engine):
+    """Test bulk_replace_table rolls back when insertion fails."""
+    
+    df = pd.DataFrame([{"iso_code": "X", "value": "not a number"}])
+    
+    # Patch session.bulk_insert_mappings to raise error
+    import src.db_engine as db_module
+    original_get_session = db_module.get_session
+
+    class FailingSession:
+        def __init__(self):
+            self.deleted = False
+        def query(self, *args, **kwargs): return self
+        def delete(self): self.deleted = True; return 1
+        def commit(self): raise RuntimeError("Simulated commit failure")
+        def rollback(self): self.deleted = False
+        def bulk_insert_mappings(self, *args, **kwargs): pass
+        def close(self): pass
+    
+    monkeypatch.setattr(db_module, "get_session", lambda engine: lambda: FailingSession())
+    
+    with pytest.raises(RuntimeError, match="Simulated commit failure"):
+        db_module.bulk_replace_table(engine, ExampleTable, df)
+
+
 # ==================== DELETE OPERATIONS TESTS ====================
 
 def test_delete_record_single_match(engine):
@@ -494,6 +546,28 @@ def test_delete_record_multiple_filters(engine):
     assert rows_deleted == 1
 
 
+def test_delete_record_exception_rolls_back(monkeypatch, engine):
+    """Test delete_record rolls back when deletion fails."""
+    
+    # Insert a record
+    insert_record(engine, ExampleTable, {"iso_code": "Y", "value": 1.0})
+    
+    import src.db_engine as db_module
+    
+    class FailingSession:
+        def query(self, *args, **kwargs): return self
+        def filter(self, *args, **kwargs): return self
+        def delete(self, synchronize_session=False): raise RuntimeError("Simulated delete failure")
+        def commit(self): pass
+        def rollback(self): pass
+        def close(self): pass
+    
+    monkeypatch.setattr(db_module, "get_session", lambda engine: lambda: FailingSession())
+    
+    with pytest.raises(RuntimeError, match="Simulated delete failure"):
+        db_module.delete_record(engine, ExampleTable, {"iso_code": "Y"})
+
+        
 # ==================== COVID DATA MODEL TESTS ====================
 
 def test_covid_data_raw_nullable_fields(engine):
