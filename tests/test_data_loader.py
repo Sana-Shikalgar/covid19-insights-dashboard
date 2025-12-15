@@ -8,6 +8,8 @@ Tests now use only statically defined models from models.py
 import pytest
 import pandas as pd
 from pathlib import Path
+from sqlalchemy.exc import SQLAlchemyError
+from unittest.mock import patch, MagicMock
 
 from src.data_loader import (
     load_csv_to_df, load_df_to_csv, load_db_to_df, load_df_to_db,
@@ -131,6 +133,16 @@ def test_load_df_to_csv_creates_directory(tmp_path):
     assert csv_path.exists()
 
 
+def test_load_df_to_csv_exception(tmp_path, sample_data):
+    """Force an OS error to test except block of load_df_to_csv."""
+    csv_path = tmp_path / "readonly_dir" / "file.csv"
+
+    # Patch os.makedirs to raise PermissionError
+    with patch("os.makedirs", side_effect=PermissionError("No permission")):
+        with pytest.raises(PermissionError, match="No permission"):
+            load_df_to_csv(sample_data, str(csv_path))
+
+
 # ==================== DATABASE TO DATAFRAME TESTS ====================
 
 def test_load_db_to_df_returns_all_rows(engine):
@@ -170,6 +182,16 @@ def test_load_db_to_df_excludes_id_by_default(engine):
 
 
 # ==================== DATAFRAME TO DATABASE TESTS ====================
+
+
+def test_load_df_to_db_exception(tmp_path, engine, sample_data):
+    """Force an exception inside load_df_to_db by patching bulk_replace_table."""
+    from src.data_loader import bulk_replace_table
+
+    with patch("src.data_loader.bulk_replace_table", side_effect=SQLAlchemyError("DB error")):
+        with pytest.raises(SQLAlchemyError, match="DB error"):
+            load_df_to_db(engine, sample_data, ExampleTable)
+
 
 def test_load_df_to_db_replaces_table_contents(engine, sample_data):
     """Test that load_df_to_db replaces existing data."""
@@ -294,6 +316,40 @@ def test_load_csv_to_db_extra_columns(engine, tmp_path):
 
 
 # ==================== DATABASE TO CSV TESTS ====================
+
+def test_load_db_to_csv_exception(tmp_path, engine):
+    """Force an exception in load_db_to_csv when DataFrame cannot be written."""
+    csv_path = tmp_path / "file.csv"
+
+    # Insert data
+    with engine.connect() as conn:
+        conn.execute(ExampleTable.__table__.insert(), [
+            {"iso_code": "USA", "country": "United States", "value": 100.0}
+        ])
+
+    # Patch df.to_csv to raise IOError
+    with patch("pandas.DataFrame.to_csv", side_effect=IOError("Write error")):
+        with pytest.raises(IOError, match="Write error"):
+            load_db_to_csv(engine, ExampleTable, str(csv_path), columns=["iso_code", "country"])
+
+
+def test_load_db_to_csv_columns_not_none(tmp_path, engine):
+    """Ensure load_db_to_csv works correctly when columns argument is provided."""
+    # Insert record
+    from src.db_engine import insert_record
+    insert_record(engine, ExampleTable, {"iso_code": "USA", "country": "United States", "value": 100.0})
+
+    csv_path = tmp_path / "subset.csv"
+    # Only export subset of columns
+    load_db_to_csv(engine, ExampleTable, str(csv_path), columns=["iso_code", "value"])
+
+    df = pd.read_csv(csv_path)
+    # Ensure only requested columns are in CSV
+    assert set(df.columns) == {"iso_code", "value"}
+    # Ensure values match DB
+    assert df.loc[0, "iso_code"] == "USA"
+    assert df.loc[0, "value"] == 100.0
+
 
 def test_load_db_to_csv_writes_expected_file(engine, tmp_path):
     """Test exporting database to CSV."""
