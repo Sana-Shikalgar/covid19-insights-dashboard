@@ -88,6 +88,11 @@ Generate coverage report:
 pytest --cov=src --cov-report=html
 ```
 
+Coverage
+
+<img width="850" height="900" alt="image" src="https://github.com/user-attachments/assets/56140de1-7aeb-4b8d-a72d-9eeac91eccfc" />
+
+
 ## Database
 
 The project uses SQLite database with three main tables:
