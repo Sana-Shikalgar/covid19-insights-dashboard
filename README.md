@@ -1,5 +1,8 @@
 # WM9QF-Task1-DataInsightsDashboard
 
+## NOTE: Due to Git LFS size constraints, only 15K of data is present in the repo. 
+Original Dataset link: https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv
+
 A comprehensive Python-based Data Insights Dashboard for analyzing and visualizing public health COVID-19 data. This project provides data loading, cleaning, analysis, and visualization capabilities with a CLI interface.
 
 ## Features
