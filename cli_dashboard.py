@@ -8,11 +8,11 @@ from datetime import datetime
 
 from src.pipeline_integration import execute_pipeline, reset_working_copy
 from src.data_loader import load_db_to_csv
+# from src.data_analyzer import run_analysis
 from src.logging_conf import log_activity
 from src.data_visualization import (
     plot_grouped_summary,
     plot_time_trend,
-    plot_summary_distribution,
     plot_correlation_heatmap
 )
 from src.db_engine import (
@@ -107,6 +107,7 @@ def menu():
 
 
 # ----------------------- CLI Loop -----------------------
+@log_activity("User has entered the CLI.")
 def run_cli():
     engine: Engine = get_engine()  # Create DB engine
     
@@ -131,9 +132,12 @@ def run_cli():
                 print(f"Table: {model.__tablename__}, Exists: {exists}, Rows: {rows}")
                 if exists:
                     df = pd.read_sql_table(model.__tablename__, engine)
-                    print(df.dtypes)
-                    # print(df.head())
-        
+                    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    print("The basic summary of the table:")
+                    print(df[numeric_cols].describe())
+                    print("\nBasic information about columns:")
+                    print(df.info(memory_usage='deep'))
+
         elif choice == "2":
             model = choose_table()
             if model:
