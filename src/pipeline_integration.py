@@ -23,6 +23,7 @@ from src.db_engine import (
 )
 from src.data_loader import load_csv_to_df, load_df_to_db, load_db_to_df
 from src.data_cleaner import clean_pipeline
+from src.helper_data_cleaning import CORE_COLS
 from src.models import CovidDataRaw, CovidDataClean, CovidDataWorking
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 class PipelineConfig:
     """Configuration for the data pipeline."""
     
-    RAW_CSV_PATH = "data/owid-covid-data.csv"
+    RAW_CSV_PATH = "data/raw/owid-covid-data.csv"
     DATABASE_DIR = "database"
     
     # Table configuration
@@ -192,10 +193,13 @@ def stage2_clean_and_validate(
         if row_count > 0:
             logger.info(f"Clean table already populated with {row_count} rows - loading from DB")
             return load_db_to_df(engine, CovidDataClean)
-    
+
+    # Select only CORE_COLS from raw DataFrame
+    df_raw_core = df_raw[CORE_COLS] 
+
     # Apply cleaning pipeline
     logger.info(f"Applying cleaning pipeline to {len(df_raw)} rows")
-    df_clean = clean_pipeline(df_raw)
+    df_clean = clean_pipeline(df_raw_core)
     
     # Filter to only core columns (clean table has subset of raw columns)
     model_cols = [c.name for c in CovidDataClean.__table__.columns if c.name != 'id']

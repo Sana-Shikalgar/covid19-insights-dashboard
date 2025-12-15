@@ -12,16 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any, Type
 import pandas as pd
 import logging
-import warnings
 from pathlib import Path
+
+# Import Base from models (single source of truth)
+from src.models import Base
 
 from src.logging_conf import log_activity
 
 logger = logging.getLogger(__name__)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Import Base from models (single source of truth)
-from src.models import Base
 
 
 # ==================== ENGINE & SESSION ====================
@@ -233,7 +232,7 @@ def bulk_insert(
 # ==================== READ OPERATIONS ====================
 
 @log_activity(message="Fetch all records")
-def get_all_records(engine: Engine, model_class: Type) -> List[Any]:
+def get_all_records(engine: Engine, model_class: Type, limit: Optional[int] = None) -> List[Any]:
     """
     Retrieve all records from a table.
     
@@ -248,7 +247,13 @@ def get_all_records(engine: Engine, model_class: Type) -> List[Any]:
     session = SessionLocal()
     
     try:
-        records = session.query(model_class).all()
+        query = session.query(model_class)
+        
+        # Apply limit if specified
+        if limit is not None:
+            query = query.limit(limit)
+        
+        records = query.all()
         table_name = getattr(model_class, "__tablename__", str(model_class))
         logger.info(f"Fetched {len(records)} records from {table_name}")
         return records
