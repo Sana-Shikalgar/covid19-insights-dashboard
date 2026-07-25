@@ -1,4 +1,4 @@
-# WM9QF-Task1-DataInsightsDashboard
+# COVID19 Insights Dashboard
 
 ## NOTE: Due to Git LFS size constraints, only 15K of data is present in the repo. 
 Original Dataset link: https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv
@@ -62,7 +62,7 @@ See `requirements.txt` for all dependencies. Main packages include:
 
 ```bash
 git clone <repository-url>
-cd WM9QF-Task1-DataInsightsDashboard
+cd covid19-insights-dashboard
 ```
 
 2. Install dependencies:
@@ -109,7 +109,3 @@ All table structures are statically defined in `src/models.py`.
 ## Logging
 
 Application logs are configured in `src/logging_conf.py`. Logs are written to the `logs/` directory with configurable levels.
-
-## Author
-
-5749407
