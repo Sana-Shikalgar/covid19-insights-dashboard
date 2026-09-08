@@ -47,9 +47,23 @@ A comprehensive Python-based Data Insights Dashboard for analyzing and visualizi
     ├── cleaned/                # Processed clean data
     └── sample/                 # Test data
 
+    data_inspection/
+    ├── data_exploration_1.ipynb    # Exploratory analysis of the original dataset
+    ├── data_exploration_2.ipynb    # Exploratory analysis of the filtered dataset
+    ├── data_quality_analysis.csv   # Column-wise missing value summary
+    └── feild_decision.xlsx         # Manual decision on which columns to keep
+
 └── cli_dashboard.py
 └── pytest.ini
 ```
+
+### Data Exploration
+
+`data_inspection/` holds the exploratory analysis behind the pipeline's design: it's where
+the source dataset's columns were profiled for data quality and manually reviewed to decide
+which fields the cleaning/analysis pipeline (`src/data_cleaner.py`, `src/helper_data_cleaning.py`)
+should keep. It documents *why* the pipeline works with the columns it does, not code the
+pipeline runs — it isn't imported or executed by the application itself.
 
 ## Requirements
 
