@@ -200,31 +200,33 @@ def bulk_insert(
     """
     if not records:
         return {"inserted": 0, "skipped": 0}
-    
+
     SessionLocal = get_session(engine)
+    session = SessionLocal()
     inserted = 0
     skipped = 0
-    
-    for record_data in records:
-        session = SessionLocal()
-        try:
-            new_record = model_class(**record_data)
-            session.add(new_record)
-            session.commit()
-            inserted += 1
-        
-        except IntegrityError:
-            session.rollback()
-            skipped += 1
-        
-        except Exception as e:
-            session.rollback()
-            skipped += 1
-            logger.warning(f"Skipped record due to error: {e}")
-        
-        finally:
-            session.close()
-    
+
+    try:
+        for record_data in records:
+            try:
+                with session.begin_nested():
+                    session.add(model_class(**record_data))
+
+            except IntegrityError:
+                skipped += 1
+
+            except Exception as e:
+                skipped += 1
+                logger.warning(f"Skipped record due to error: {e}")
+
+            else:
+                inserted += 1
+
+        session.commit()
+
+    finally:
+        session.close()
+
     logger.info(f"Bulk insert: {inserted} inserted, {skipped} skipped")
     return {"inserted": inserted, "skipped": skipped}
 

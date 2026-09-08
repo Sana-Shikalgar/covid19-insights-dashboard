@@ -8,7 +8,6 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 Problems found during a review of the current codebase:
 
-- **`bulk_insert` is not bulk**: `src/db_engine.py:184-229` opens and commits a brand-new SQLAlchemy session for every single record in the input list. This will be very slow on the full OWID dataset (hundreds of thousands of rows) and defeats the purpose of a "bulk" operation.
 - **`data_analyzer.py` is effectively dead code**: `cli_dashboard.py:11` imports `run_analysis` from `src.data_analyzer` but comments it out, and the plotting menu (choice "4") hardcodes its own inline `groupby`/column logic instead of calling `generate_grouped_summary`/`generate_time_trend`. The analysis module is unit-tested but never actually exercised by the application.
 - **`fig.show()` won't render headlessly**: `cli_dashboard.py` calls `fig.show()` after building plots (choice "4"). On a machine/container without a GUI-capable matplotlib backend (common in CI, Docker, or SSH sessions), this silently does nothing — there's no `savefig()` fallback to write the plot to disk.
 - **Stale docstring in `data_visualization.py`**: `src/data_visualization.py:3` describes the module as "Creates matplotlib figures for Streamlit/Flask web applications," but no Streamlit/Flask integration exists anywhere in the repo — the only consumer is the CLI's `fig.show()`.
