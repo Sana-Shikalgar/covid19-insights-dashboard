@@ -7,7 +7,7 @@ from src.logging_conf import setup_logging, log_activity, log_user_action, log_s
 # Test setup_logging
 # --------------------------
 def test_setup_logging_creates_logger(tmp_path, monkeypatch):
-    log_dir = tmp_path / "log"
+    log_dir = tmp_path / "logs"
     monkeypatch.chdir(tmp_path)  # Change working dir to tmp_path
     
     logger = setup_logging(log_level="DEBUG")
@@ -15,26 +15,26 @@ def test_setup_logging_creates_logger(tmp_path, monkeypatch):
     assert isinstance(logger, logging.Logger)
     assert logger.getEffectiveLevel() == logging.DEBUG
     # The log directory should exist
-    assert log_dir.exists() or (tmp_path / "log").exists()
+    assert log_dir.exists() or (tmp_path / "logs").exists()
 
 def test_setup_logging_custom_log_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     log_file_name = "custom_log.log"
     logger = setup_logging(log_file=log_file_name)
     
-    log_path = Path("log") / log_file_name
+    log_path = Path("logs") / log_file_name
     assert log_path.parent.exists()
     # Log file path should match
     root_logger = logging.getLogger()
     file_handlers = [h for h in root_logger.handlers if isinstance(h, logging.FileHandler)]
     
         # Fix 1: Assert using RESOLVED absolute path
-    expected_path = (tmp_path / "log" / log_file_name).resolve()
+    expected_path = (tmp_path / "logs" / log_file_name).resolve()
     actual_paths = [Path(h.baseFilename).resolve() for h in file_handlers]
     assert expected_path in actual_paths, f"Expected {expected_path}, got {actual_paths}"
     
     # Fix 2: Verify directory created
-    assert (tmp_path / "log").exists()
+    assert (tmp_path / "logs").exists()
 
 # --------------------------
 # Test log_activity decorator

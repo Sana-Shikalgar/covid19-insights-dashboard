@@ -8,7 +8,6 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 Problems found during a review of the current codebase:
 
-- **`log/` vs `logs/` mismatch**: `src/logging_conf.py:29` creates and writes to a `log/` directory, but `pytest.ini:2` writes test logs to `logs/app.log`, the repo tracks a `logs/.gitkeep`, and the README (`README.md`) states logs are written to `logs/`. Running the CLI creates a stray, undocumented `log/` folder instead of using the tracked `logs/` directory.
 - **Import-time logging side effect**: `src/logging_conf.py:167` calls `setup_logging()` at module import time, which calls `logging.basicConfig(..., force=True)`. Simply importing the module (e.g. from a test, notebook, or another application) clobbers any logging configuration already set up by the caller, and creates the `log/` directory as a side effect of import.
 - **Inconsistent CLI error handling**: in `cli_dashboard.py`, menu choices "6", "7", "8" wrap their operations in try/except, but choices "2" (filter/fetch) and "9" (read with limit) do not. Bad input (invalid filter column, wrong date format, non-numeric limit) raises an uncaught exception and crashes the whole CLI session instead of returning to the menu.
 - **`bulk_insert` is not bulk**: `src/db_engine.py:184-229` opens and commits a brand-new SQLAlchemy session for every single record in the input list. This will be very slow on the full OWID dataset (hundreds of thousands of rows) and defeats the purpose of a "bulk" operation.

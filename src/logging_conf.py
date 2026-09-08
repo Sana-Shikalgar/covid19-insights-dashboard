@@ -26,7 +26,7 @@ def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None) -> lo
         Configured logger instance
     """
     # Create log directory
-    log_dir = Path("log")
+    log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     
     # Generate log filename with timestamp if not provided
