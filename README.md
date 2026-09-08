@@ -3,6 +3,10 @@
 ## NOTE: Due to Git LFS size constraints, only 15K of data is present in the repo. 
 Original Dataset link: https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv
 
+To use the full dataset, download the CSV from the link above and place it at
+`data/raw/owid-covid-data.csv`, replacing the bundled subset. This is the path
+`PipelineConfig.RAW_CSV_PATH` (`src/pipeline_integration.py`) reads from by default.
+
 A comprehensive Python-based Data Insights Dashboard for analyzing and visualizing public health COVID-19 data. This project provides data loading, cleaning, analysis, and visualization capabilities with a CLI interface.
 
 ## Features
