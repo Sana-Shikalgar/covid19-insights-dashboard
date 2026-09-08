@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "covid19-insights-dashboard"
+version = "0.1.0"
+description = "CLI dashboard for analyzing and visualizing public health COVID-19 data"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas==3.0.5",
+    "sqlalchemy==2.0.52",
+    "matplotlib==3.11.1",
+    "seaborn==0.13.2",
+    "numpy==2.4.6",
+    "python-dateutil==2.9.0.post0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+]
+
+[project.scripts]
+covid19-insights-dashboard = "cli_dashboard:run_cli"
+
+[tool.setuptools]
+py-modules = ["cli_dashboard"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+namespaces = true
