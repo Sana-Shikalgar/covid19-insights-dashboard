@@ -1,4 +1,4 @@
-# src/data_cleaning.py
+# src/data_cleaner.py
 
 import pandas as pd
 from typing import Optional

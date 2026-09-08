@@ -8,7 +8,6 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 Problems found during a review of the current codebase:
 
-- **Stale file-path comment in `data_cleaner.py`**: `src/data_cleaner.py:1` still has a header comment `# src/data_cleaning.py`, the file's old name.
 
 ## Reproducibility & Architecture Improvements
 
