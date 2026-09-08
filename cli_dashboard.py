@@ -141,9 +141,12 @@ def run_cli():
         elif choice == "2":
             model = choose_table()
             if model:
-                filters = input_dict("Enter filters")
-                results = filter_by_col_values(engine, model, filters)
-                print(pd.DataFrame(results).head())
+                try:
+                    filters = input_dict("Enter filters")
+                    results = filter_by_col_values(engine, model, filters)
+                    print(pd.DataFrame(results).head())
+                except Exception as e:
+                    print(f"Error filtering records: {e}")
         
         elif choice == "3":
             model = choose_table()
@@ -233,9 +236,12 @@ def run_cli():
         elif choice == "9":
             model = choose_table()
             if model:
-                limit = int(input("Enter number of records to display: ").strip())
-                df = pd.read_sql_table(model.__tablename__, engine)
-                print(df.head(limit))
+                try:
+                    limit = int(input("Enter number of records to display: ").strip())
+                    df = pd.read_sql_table(model.__tablename__, engine)
+                    print(df.head(limit))
+                except Exception as e:
+                    print(f"Error reading records: {e}")
         
         elif choice == "10":
             model = choose_table()
