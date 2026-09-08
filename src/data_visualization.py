@@ -1,6 +1,6 @@
 """
 Data visualization module for COVID-19 health dashboard.
-Creates matplotlib figures for Streamlit/Flask web applications.
+Creates matplotlib figures for the CLI dashboard.
 """
 
 import matplotlib.pyplot as plt

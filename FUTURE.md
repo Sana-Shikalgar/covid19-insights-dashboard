@@ -8,7 +8,6 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 Problems found during a review of the current codebase:
 
-- **Stale docstring in `data_visualization.py`**: `src/data_visualization.py:3` describes the module as "Creates matplotlib figures for Streamlit/Flask web applications," but no Streamlit/Flask integration exists anywhere in the repo — the only consumer is the CLI's `fig.show()`.
 - **Stale file-path comment in `data_cleaner.py`**: `src/data_cleaner.py:1` still has a header comment `# src/data_cleaning.py`, the file's old name.
 
 ## Reproducibility & Architecture Improvements
