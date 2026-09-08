@@ -1,129 +1,95 @@
 # COVID19 Insights Dashboard
 
-## NOTE: Due to Git LFS size constraints, only 15K of data is present in the repo. 
-Original Dataset link: https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv
+A CLI tool for loading, cleaning, analyzing, and visualizing public health COVID-19
+data from [Our World in Data](https://github.com/owid/covid-19-data). It runs the raw
+dataset through an ETL pipeline into a local SQLite database (raw → cleaned → working
+copies), then lets you explore it interactively: view summaries, filter and export
+records, edit rows, and generate grouped-summary, time-trend, and correlation plots.
 
-To use the full dataset, download the CSV from the link above and place it at
-`data/raw/owid-covid-data.csv`, replacing the bundled subset. This is the path
-`PipelineConfig.RAW_CSV_PATH` (`src/pipeline_integration.py`) reads from by default.
+## What it does
 
-A comprehensive Python-based Data Insights Dashboard for analyzing and visualizing public health COVID-19 data. This project provides data loading, cleaning, analysis, and visualization capabilities with a CLI interface.
+- **Loads** a CSV of COVID-19 records into SQLite (`src/data_loader.py`, `src/db_engine.py`)
+- **Cleans** it — normalizes dates, imputes missing continent/GDP values, drops unusable
+  rows (`src/data_cleaner.py`, `src/helper_data_cleaning.py`)
+- **Analyzes** it — grouped summaries and time trends (`src/data_analyzer.py`)
+- **Visualizes** it — bar charts, time-series lines, and a correlation heatmap, saved to
+  `plots/` (`src/data_visualization.py`)
+- **Serves** all of the above through an interactive menu-driven CLI (`cli_dashboard.py`)
 
-## Features
+## Getting Started
 
-- **Data Loading**: Import CSV files and manage data in SQLite databases
-- **Data Cleaning**: Normalize dates, handle missing values, and validate data quality
-- **Data Analysis**: Aggregate, filter, and analyze COVID-19 health metrics
-- **Data Visualization**: Generate plots including time trends, correlations, and grouped summaries
-- **CLI Dashboard**: Interactive command-line interface for data exploration
-- **Database Management**: SQLAlchemy-based ORM with support for raw, cleaned, and working data tables
-- **Testing**: Comprehensive test suite with pytest and coverage reporting
+1. Clone the repository and `cd` into it:
 
-## Project Structure
-
-```
-    src/
-    ├── data_loader.py          # CSV and database import/export operations
-    ├── data_cleaner.py         # Data cleaning and validation
-    ├── data_analyzer.py        # Data analysis and aggregation
-    ├── data_visualization.py   # Matplotlib-based plotting functions
-    ├── db_engine.py            # SQLAlchemy database operations
-    ├── models.py               # SQLAlchemy ORM models
-    ├── pipeline_integration.py # ETL pipeline orchestration
-    ├── helper_data_cleaning.py # Data cleaning utilities
-    └── logging_conf.py         # Logging configuration
-
-    tests/
-    ├── test_data_loader.py
-    ├── test_data_cleaner.py
-    ├── test_data_analyzer.py
-    ├── test_data_visualization.py
-    ├── test_db_engine.py
-    ├── test_pipeline_integration.py
-    └── test_helper_data_cleaning.py
-
-    data/
-    ├── raw/                    # Raw data files
-    ├── cleaned/                # Processed clean data
-    └── sample/                 # Test data
-
-    data_inspection/
-    ├── data_exploration_1.ipynb    # Exploratory analysis of the original dataset
-    ├── data_exploration_2.ipynb    # Exploratory analysis of the filtered dataset
-    ├── data_quality_analysis.csv   # Column-wise missing value summary
-    └── feild_decision.xlsx         # Manual decision on which columns to keep
-
-└── cli_dashboard.py
-└── pytest.ini
-```
-
-### Data Exploration
-
-`data_inspection/` holds the exploratory analysis behind the pipeline's design: it's where
-the source dataset's columns were profiled for data quality and manually reviewed to decide
-which fields the cleaning/analysis pipeline (`src/data_cleaner.py`, `src/helper_data_cleaning.py`)
-should keep. It documents *why* the pipeline works with the columns it does, not code the
-pipeline runs — it isn't imported or executed by the application itself.
-
-## Requirements
-
-See `requirements.txt` for all dependencies. Main packages include:
-
-- **pandas**: Data manipulation and analysis
-- **sqlalchemy**: Database ORM
-- **matplotlib & seaborn**: Data visualization
-- **pytest**: Unit testing
-
-## Installation
-
-1. Clone the repository:
-
-```bash
-git clone <repository-url>
-cd covid19-insights-dashboard
-```
+   ```bash
+   git clone <repository-url>
+   cd covid19-insights-dashboard
+   ```
 
 2. Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-## Usage
+3. Run it:
 
-### Run the CLI Dashboard
+   ```bash
+   python cli_dashboard.py
+   ```
 
-```bash
-python cli_dashboard.py
-```
+   On first run this loads the bundled dataset, cleans it, and populates the local
+   SQLite database (`database/health_data.db`) before dropping you into the menu:
 
-### Run Tests
+   ```
+   --- Public Health Data Insights CLI ---
+   1. View summary
+   2. Filter data and fetch
+   3. Export CSV
+   4. Generate plots
+   5. Reset working table
+   6. Insert one record
+   7. Update record
+   8. Delete record
+   9. Read records (limit)
+   10. Show row count
+   0. Exit
+   ```
+
+### Dataset
+
+Only a 15K-row subset of `data/raw/owid-covid-data.csv` ships in the repo (Git LFS size
+limits). To use the full dataset, download the CSV from
+[OWID's repository](https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-data.csv)
+and replace `data/raw/owid-covid-data.csv` with it — that's the path
+`PipelineConfig.RAW_CSV_PATH` (`src/pipeline_integration.py`) reads by default.
+
+`data_inspection/` holds the exploratory analysis behind the pipeline's design: the
+notebooks and spreadsheet used to profile the source columns for data quality and decide
+which fields the cleaning pipeline keeps. It documents *why* the pipeline works with the
+columns it does — it isn't imported or executed by the application itself.
+
+## Running Tests
 
 ```bash
 pytest
 ```
 
-Generate coverage report:
+With coverage:
 
 ```bash
 pytest --cov=src --cov-report=html
 ```
 
-Coverage
-
-<img width="850" height="900" alt="image" src="https://github.com/user-attachments/assets/56140de1-7aeb-4b8d-a72d-9eeac91eccfc" />
-
+`pytest.ini` runs the suite with a `logs/app.log` capture by default.
 
 ## Database
 
-The project uses SQLite database with three main tables:
+SQLite, with three tables defined in `src/models.py`:
 
-- **CovidDataRaw**: Raw imported data
-- **CovidDataClean**: Cleaned and validated data
-- **CovidDataWorking**: Working copy for analysis and manipulation
-
-All table structures are statically defined in `src/models.py`.
+- **CovidDataRaw**: data as loaded from the CSV
+- **CovidDataClean**: cleaned and validated data
+- **CovidDataWorking**: a working copy for analysis, edits, and resets
 
 ## Logging
 
-Application logs are configured in `src/logging_conf.py`. Logs are written to the `logs/` directory with configurable levels.
+Application logs are configured in `src/logging_conf.py` and written to `logs/`.
