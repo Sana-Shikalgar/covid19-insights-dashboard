@@ -8,7 +8,6 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 Problems found during a review of the current codebase:
 
-- **Import-time logging side effect**: `src/logging_conf.py:167` calls `setup_logging()` at module import time, which calls `logging.basicConfig(..., force=True)`. Simply importing the module (e.g. from a test, notebook, or another application) clobbers any logging configuration already set up by the caller, and creates the `log/` directory as a side effect of import.
 - **Inconsistent CLI error handling**: in `cli_dashboard.py`, menu choices "6", "7", "8" wrap their operations in try/except, but choices "2" (filter/fetch) and "9" (read with limit) do not. Bad input (invalid filter column, wrong date format, non-numeric limit) raises an uncaught exception and crashes the whole CLI session instead of returning to the menu.
 - **`bulk_insert` is not bulk**: `src/db_engine.py:184-229` opens and commits a brand-new SQLAlchemy session for every single record in the input list. This will be very slow on the full OWID dataset (hundreds of thousands of rows) and defeats the purpose of a "bulk" operation.
 - **`data_analyzer.py` is effectively dead code**: `cli_dashboard.py:11` imports `run_analysis` from `src.data_analyzer` but comments it out, and the plotting menu (choice "4") hardcodes its own inline `groupby`/column logic instead of calling `generate_grouped_summary`/`generate_time_trend`. The analysis module is unit-tested but never actually exercised by the application.

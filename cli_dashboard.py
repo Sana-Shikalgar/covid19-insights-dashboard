@@ -9,7 +9,7 @@ from datetime import datetime
 from src.pipeline_integration import execute_pipeline, reset_working_copy
 from src.data_loader import load_db_to_csv
 # from src.data_analyzer import run_analysis
-from src.logging_conf import log_activity
+from src.logging_conf import log_activity, setup_logging
 from src.data_visualization import (
     plot_grouped_summary,
     plot_time_trend,
@@ -251,4 +251,5 @@ def run_cli():
             menu()
 
 if __name__ == "__main__":
+    setup_logging()
     run_cli()

@@ -161,12 +161,6 @@ def log_summary_generation(
     log_user_action("Summary Generation", details)
 
 
-# ==================== INITIALIZE DEFAULT LOGGER ====================
-
-# Create default logger on module import
-logger = setup_logging()
-
-
 # ==================== EXAMPLE FUNCTIONS ====================
 # NOTE: These example functions are not used in the application.
 # Consider removing if not needed for documentation purposes.
