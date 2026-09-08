@@ -6,9 +6,11 @@ Ideas for extending this project beyond its current CLI-based scope:
 
 ## Reproducibility & Architecture Improvements
 
-- **No containerized/environment-pinned setup**: there's no Dockerfile or `environment.yml`, so reproducing the exact runtime (Python version, OS-level deps for matplotlib/seaborn) depends entirely on the developer's local setup. A Dockerfile would make results reproducible independent of host OS.
-- **No packaging metadata**: there's no `pyproject.toml`/`setup.py`, so the project can't be `pip install -e .`'d and only works if scripts are run from the repo root (relying on `src.*` imports resolving via CWD). Adding packaging metadata would make the project usable as a library and installable in other environments.
-- **No CI workflow**: there's no `.github/workflows/` (or equivalent) running `pytest`/coverage on push or PR, so regressions aren't caught automatically before merge.
+Considered and deliberately deferred until the project's scope grows past a single-developer CLI tool:
+
+- **Packaging metadata** (`pyproject.toml`/`setup.py`): would let the project be `pip install -e .`'d and used as a library instead of only working when scripts are run from the repo root (relying on `src.*` imports resolving via CWD). Not worth the overhead while it's a standalone CLI run from the repo root.
+- **CI workflow** (`.github/workflows/` or equivalent running `pytest`/coverage on push or PR): useful once there are multiple contributors or branches to protect; not providing much value against a single-branch, single-author repo.
+- **Containerized setup** (Dockerfile/`environment.yml`): would pin the exact runtime (Python version, OS-level deps for matplotlib/seaborn) independent of host OS. Not worth maintaining without a deployment target or a second developer's environment to reconcile against.
 
 ## Privacy / PII to Clean Up
 
