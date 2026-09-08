@@ -3,6 +3,7 @@ import threading
 import itertools
 import time
 import pandas as pd
+from pathlib import Path
 from sqlalchemy.engine import Engine
 from datetime import datetime
 
@@ -55,6 +56,15 @@ def show_loading(message="Loading"):
     return stop
 
 # ----------------------- Helpers -----------------------
+def render_plot(fig, name: str, output_dir: str = "plots") -> None:
+    """Save a plot to disk and attempt to display it interactively."""
+    Path(output_dir).mkdir(exist_ok=True)
+    path = Path(output_dir) / f"{name}.png"
+    fig.savefig(path)
+    print(f"Plot saved to {path}")
+    fig.show()
+
+
 def choose_table():
     print("\nSelect table:")
     print("1. Raw")
@@ -186,14 +196,14 @@ def run_cli():
                     fig = plot_grouped_summary(grouped, group_col, f"{value_col}_mean")
                     fig.suptitle(f"Grouped Summary: {value_col.replace('_',' ').title()} by {group_col.title()}",
                                 fontsize=16, fontweight='bold', y=1.02)
-                    fig.show()
+                    render_plot(fig, "grouped_summary")
 
                 if plot_choice in ["2","4"]:
                     trend = analysis["trend"]
                     fig = plot_time_trend(trend, time_col, value_col)
                     fig.suptitle(f"Time Trend of {value_col.replace('_',' ').title()} over Time",
                                 fontsize=16, fontweight='bold', y=1.02)
-                    fig.show()
+                    render_plot(fig, "time_trend")
                 
                 if plot_choice in ["3","4"]:
                     numeric_cols = ["total_cases", "new_cases", "total_deaths", "new_deaths",
@@ -201,7 +211,7 @@ def run_cli():
                     fig = plot_correlation_heatmap(df[numeric_cols])
                     fig.suptitle("Correlation Heatmap of Core COVID Metrics",
                                 fontsize=16, fontweight='bold', y=1.02)
-                    fig.show()
+                    render_plot(fig, "correlation_heatmap")
 
         
         elif choice == "5":
