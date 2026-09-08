@@ -8,7 +8,7 @@ from datetime import datetime
 
 from src.pipeline_integration import execute_pipeline, reset_working_copy
 from src.data_loader import load_db_to_csv
-# from src.data_analyzer import run_analysis
+from src.data_analyzer import run_analysis
 from src.logging_conf import log_activity, setup_logging
 from src.data_visualization import (
     plot_grouped_summary,
@@ -170,24 +170,27 @@ def run_cli():
                 print(f'--' * 30)
         
                 print(df)
+                # Example defaults for non-interactive plotting
+                group_col = "continent"       # category
+                time_col = "date"
+                value_col = "new_cases"       # numeric
+                analysis = run_analysis(
+                    df,
+                    group_by=[group_col],
+                    time_column=time_col,
+                    value_column=value_col,
+                )
+
                 if plot_choice in ["1","4"]:
-                    # Example defaults for non-interactive plotting
-                    group_col = "continent"       # category
-                    value_col = "new_cases"       # numeric
-                    grouped = (
-                        df.groupby("continent", as_index=False)["new_cases"]
-                        .mean()
-                        # .rename(columns={"new_cases": "new_cases_mean"})
-                    )
-                    fig = plot_grouped_summary(grouped, group_col, value_col)
+                    grouped = analysis["grouped_summary"]
+                    fig = plot_grouped_summary(grouped, group_col, f"{value_col}_mean")
                     fig.suptitle(f"Grouped Summary: {value_col.replace('_',' ').title()} by {group_col.title()}",
                                 fontsize=16, fontweight='bold', y=1.02)
                     fig.show()
-                
+
                 if plot_choice in ["2","4"]:
-                    time_col = "date"
-                    value_col = "new_cases"
-                    fig = plot_time_trend(df, time_col, value_col)
+                    trend = analysis["trend"]
+                    fig = plot_time_trend(trend, time_col, value_col)
                     fig.suptitle(f"Time Trend of {value_col.replace('_',' ').title()} over Time",
                                 fontsize=16, fontweight='bold', y=1.02)
                     fig.show()
